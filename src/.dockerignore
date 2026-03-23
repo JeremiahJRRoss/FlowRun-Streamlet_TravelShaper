@@ -1,0 +1,15 @@
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+.pytest_cache
+.venv
+docs/
+tests/
+evaluations/
+scripts/
+*.md
+!README.md
+spans_export.csv
+run_traces.sh
