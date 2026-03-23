@@ -161,6 +161,10 @@ fire 10 "Seattle → Austin · SXSW · Full experience · Domestic" \
 }'
 
 # ============================================================
+echo ""
+echo "  Exporting spans to CSV..."
+python3 -m scripts.export_spans || echo "  (Span export skipped — Phoenix may not be reachable)"
+echo ""
 echo "  All 10 queries complete."
 echo "  View traces → http://localhost:6006"
 echo "  Run evals  → python3 -m evaluations.run_evals"
