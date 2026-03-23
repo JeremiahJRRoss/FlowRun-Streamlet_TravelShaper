@@ -243,85 +243,181 @@ The API endpoints remain fully available alongside the UI. curl, pytest, and any
 
 ### GET /
 
-Serves the browser-based chat interface. Open in any browser — no curl needed.
+Serves the browser UI. Open in any browser.
 
 ```
 http://localhost:8000
 ```
 
+---
+
 ### POST /chat
 
-Send a message to TravelShaper and receive a response.
+Synchronous — waits for the full response, then returns it. Used by curl, tests, and any HTTP client that doesn't consume SSE. The request body mirrors exactly what the browser form submits.
+
+**Full request (all fields):**
 
 ```bash
-curl -X POST http://localhost:8000/chat \
+curl -s -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "I want to plan a trip to Barcelona from San Francisco in October. I love food and photography and want the full experience."}'
+  -d '{
+    "message": "I am planning a trip departing from San Francisco, CA (please identify the nearest major international airport). Destination: Tokyo, Japan. Departure: 2026-04-10. Return: 2026-04-24 (2 weeks). Budget preference: save money. Interests: food and dining, photography. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
+    "departure": "San Francisco, CA",
+    "destination": "Tokyo, Japan",
+    "preferences": "I want to leave feeling like I understand the real shape of this city — not just the postcard version. I am happy to walk all day."
+  }' | python3 -m json.tool
 ```
 
-Response:
+**Minimal request (message only):**
+
+```bash
+curl -s -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Plan a trip from New York to Rome in September, save money, I love food and history."
+  }' | python3 -m json.tool
+```
+
+**Request fields:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `message` | string | Yes | Full trip description in natural language |
+| `departure` | string | No | Raw departure city — validated by gpt-4o; misspellings auto-corrected |
+| `destination` | string | No | Raw destination — validated by gpt-4o; unrecognisable names return 400 |
+| `preferences` | string | No | Up to 500 chars; safety-checked by gpt-4o before use |
+
+**Successful response:**
 
 ```json
 {
-  "response": "Great choice! Barcelona in October is ideal — warm enough for outdoor dining but past the summer crowds. Let me search for flights, hotels, and local recommendations for you..."
+  "response": "Nobody tells you about the 6am fish market. Tourists are asleep. That's the point...\n\n## ✈️ Getting There\n\nANA via Los Angeles lands you in Narita for $687 round trip — that's $200 cheaper than the JAL direct and the layover is short enough that you won't notice it...\n\n## 🏨 Where to Stay\n\n[Khaosan Tokyo Kabuki](https://www.khaosan-tokyo.com/en/kabuki/) in Asakusa — $35/night. Walk out the front door and you're eight minutes from Senso-ji at dawn..."
 }
 ```
 
-### POST /chat (additional queries)
+**Validation error — unrecognisable place (HTTP 400):**
 
-Each request is independent (no session memory). To ask about a different aspect of your trip, include the relevant context again:
-
-```bash
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What is the nightlife like in Barcelona in October? Are there any art exhibitions?"}'
+```json
+{
+  "detail": {
+    "field": "destination",
+    "message": "We couldn't find a place called 'Fakeville'. Please check the spelling or try a nearby major city."
+  }
+}
 ```
 
-> **Production enhancement:** Adding session-based conversation memory would allow true multi-turn planning where TravelShaper remembers earlier context across requests.
+**Validation error — unsafe preferences (HTTP 400):**
+
+```json
+{
+  "detail": "Your additional preferences could not be used: Request contains content that is not permitted."
+}
+```
+
+---
+
+### POST /chat/stream
+
+SSE streaming endpoint — used by the browser UI. Sends incremental status events as each tool fires, then the final briefing. Same request body as `/chat`.
+
+```bash
+curl -s -X POST http://localhost:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Departing San Francisco, going to Tokyo, April 10 for 2 weeks, save money, food and photography.",
+    "departure": "San Francisco, CA",
+    "destination": "Tokyo, Japan",
+    "preferences": "Happy to walk all day. I want the real city, not the tourist version."
+  }'
+```
+
+**Example SSE stream output:**
+
+```
+event: status
+data: {"message": "✈️  Searching flights"}
+
+event: status
+data: {"message": "🏨  Finding hotels"}
+
+event: status
+data: {"message": "🗺️  Gathering cultural guide"}
+
+event: status
+data: {"message": "🔍  Searching the web"}
+
+event: status
+data: {"message": "📊  Processing search results"}
+
+event: status
+data: {"message": "✍️  Writing your personalised briefing"}
+
+event: done
+data: {"response": "Nobody tells you about the 6am fish market..."}
+```
+
+**If a place name was auto-corrected**, a `place_corrected` event fires before the status stream:
+
+```
+event: place_corrected
+data: {"field": "destination", "original": "Tokio", "canonical": "Tokyo, Japan"}
+
+event: status
+data: {"message": "✈️  Searching flights"}
+...
+```
+
+**All SSE event types:**
+
+| Event | Payload | When it fires |
+|-------|---------|---------------|
+| `place_corrected` | `{"field", "original", "canonical"}` | Input was misspelled but identified — agent proceeds with corrected name |
+| `place_error` | `{"field", "message"}` | Input is unrecognisable — stream ends, show error on form |
+| `validation_error` | `{"message"}` | Preferences failed safety check — stream ends |
+| `status` | `{"message"}` | A tool fired or synthesis began |
+| `done` | `{"response"}` | Full briefing text — render the report |
+| `error` | `{"message"}` | Agent raised an exception |
+
+---
 
 ### GET /health
 
-Health check endpoint.
-
 ```bash
 curl http://localhost:8000/health
+# → {"status": "ok"}
 ```
 
-Returns `{"status": "ok"}`.
 
----
 
 ## Architecture
 
 ```
-User
+Browser / curl
   │
-  ▼
-FastAPI (/chat)
-  │
-  ▼
-LangGraph Agent
-  │
-  ├── llm_call (GPT-4o with system prompt + tools)
-  │     │
-  │     ├── Needs more info? → Ask user follow-up
-  │     │
-  │     └── Ready to search? → Dispatch tools
-  │           │
-  │           ├── search_flights    (SerpAPI → Google Flights)
-  │           ├── search_hotels     (SerpAPI → Google Hotels)
-  │           ├── get_cultural_guide (SerpAPI → Google Search, scoped)
-  │           └── duckduckgo_search  (DuckDuckGo, general fallback)
-  │
-  ├── tool_node (executes tool calls, returns results)
-  │
-  └── llm_call (synthesizes results into travel briefing)
-        │
-        ▼
-      Response to user
+  ├── POST /chat/stream  (SSE — browser UI)
+  └── POST /chat         (sync — curl / tests)
+           │
+           ▼
+     Place + Preference Validation (gpt-4o)
+           │
+           ▼
+     LangGraph Agent
+           │
+     get_system_prompt(message)
+           ├── "save money" → Bourdain / Billy Dee / Gladwell voice
+           └── default     → Leach / Pharrell / Rushdie voice
+           │
+     llm_call (gpt-5.3-chat-latest)
+           │
+           ├── search_flights       (SerpAPI → Google Flights)
+           ├── search_hotels        (SerpAPI → Google Hotels)
+           ├── get_cultural_guide   (SerpAPI → Google Search)
+           └── duckduckgo_search    (DuckDuckGo, no key needed)
+           │
+     tool_node → llm_call (synthesis)
+           │
+     SSE stream / JSON response → browser / client
 ```
-
-The agent runs in a loop: the LLM decides whether to call tools or respond. It may call multiple tools in a single turn, then synthesize all results into one cohesive briefing.
 
 ### Tools
 
@@ -367,103 +463,102 @@ This runs two evaluation metrics on captured traces:
 
 ## Testing
 
-Run the test suite:
+Run the full test suite:
 
 ```bash
 poetry run pytest tests/ -v
 ```
 
-Tests cover:
+**14 tests, all mocked — no live API keys required.**
 
-- Tool schema validation (correct input/output types)
-- Agent graph construction (nodes and edges wired correctly)
-- API endpoint responses (health check, chat request/response format)
+| File | Tests | What they cover |
+|------|-------|-----------------|
+| `test_tools.py` | 4 | Flight/hotel/cultural guide formatting and empty-result handling |
+| `test_agent.py` | 2 | Graph node names, tool registry count and names |
+| `test_api.py` | 8 | Health check, chat endpoint, valid/invalid preferences, valid/invalid/corrected place names |
+
+Expected output: `14 passed` (one warning about `temperature` in `model_kwargs` is expected and harmless — it's a LangChain version artifact).
 
 ---
 
 ## Project Structure
 
-Target layout for the completed project:
-
 ```
-se-interview/
-├── api.py                  # FastAPI server with /chat, /health, and static UI
-├── agent.py                # LangGraph agent — graph definition and system prompt
+src/
+├── api.py                  # FastAPI — /chat (sync), /chat/stream (SSE), /health, static UI
+│                           # Place validation (gpt-4o) + preference safety check
+├── agent.py                # LangGraph agent — dual system prompts, voice routing, tools
 ├── static/
-│   └── index.html          # Browser chat interface (served at http://localhost:8000)
+│   └── index.html          # Browser UI — Bebas Neue / Cormorant Garamond / DM Sans
 ├── tools/
-│   ├── __init__.py
+│   ├── __init__.py         # serpapi_request() helper
 │   ├── flights.py          # search_flights — SerpAPI Google Flights
 │   ├── hotels.py           # search_hotels — SerpAPI Google Hotels
-│   └── cultural_guide.py   # get_cultural_guide — scoped web search + synthesis
+│   └── cultural_guide.py   # get_cultural_guide — scoped Google search
 ├── evaluations/
 │   ├── run_evals.py        # Phoenix evaluation runner
 │   └── metrics/
-│       ├── frustration.py  # User frustration evaluator
-│       └── tool_correctness.py
+│       ├── frustration.py  # USER_FRUSTRATION_PROMPT
+│       └── tool_correctness.py  # TOOL_CORRECTNESS_PROMPT
 ├── tests/
-│   ├── test_tools.py       # Tool unit tests
-│   ├── test_agent.py       # Agent graph tests
-│   └── test_api.py         # API endpoint tests
+│   ├── test_tools.py       # 4 tool tests
+│   ├── test_agent.py       # 2 agent graph tests
+│   └── test_api.py         # 8 endpoint + validation tests
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── system-prompt-spec.md
+│   ├── test-specification.md
+│   ├── docker-spec.md
+│   ├── presentation-outline.md
+│   ├── evaluation-prompts.md
+│   └── trace-queries.md
 ├── Dockerfile
-├── docker-compose.yml      # App + Phoenix
-├── pyproject.toml           # Poetry dependencies
+├── docker-compose.yml
+├── pyproject.toml
 ├── .env.example
-└── README.md               # This file
+├── CHANGELOG.md
+└── RUNNING.md
 ```
 
 ---
 
-## Example Session
+## Example Briefing
 
-The following is an illustrative example of the kind of response TravelShaper produces. Actual output depends on live search results at query time and will vary.
+The following illustrates the kind of output TravelShaper produces on a budget trip to Japan. Actual content depends on live search results and will vary.
 
-```
-You:     Hey, I'm planning a trip to Japan. Flying from SFO,
-         sometime in April, about 2 weeks. I love food and
-         photography. Trying to save money where I can.
+**Form inputs:**
+- Departing from: San Francisco, CA
+- Destination: Tokyo, Japan
+- Departure: April 10 · 2 weeks
+- Budget: Save money
+- Interests: Food, Photography
+- Preferences: *"I want to leave feeling like I understand the real shape of this city — not just the postcard version. I'm happy to walk all day."*
 
-TravelShaper: Great timing — April is cherry blossom season in Japan,
-         which is perfect for photography. Let me search for
-         flights, hotels, and local intel for you.
+**Briefing (abbreviated):**
 
-         ✈ FLIGHTS (SFO → Tokyo)
-         I found several options for mid-April:
-         - ANA via LAX: $687 round trip, 14h — best value
-         - JAL direct: $892 round trip, 11h — worth it if you
-           want to arrive rested
-         - United direct: $845 round trip, 11.5h
+---
 
-         🏨 HOTELS
-         For budget-conscious stays in Tokyo:
-         - Khaosan Tokyo Kabuki: $35/night, Asakusa — great
-           location for temples and street food
-         - Hotel Graphy Nezu: $62/night, Bunkyo — quiet area,
-           near Ueno Park for cherry blossoms
+Nobody tells you about the 6am fish market. Tourists are asleep. That's the point. That's where Tokyo shows you who it actually is. Here's how to get there, where to sleep, and what to eat when you arrive.
 
-         🗾 BEFORE YOU GO
-         Language: "Sumimasen" (excuse me) and "Arigatou
-         gozaimasu" (thank you) will get you far. English is
-         limited outside Tokyo station and tourist areas.
+**01 — GETTING THERE**
 
-         Etiquette: Don't tip — it's considered rude. Remove
-         shoes indoors (socks without holes!). Don't eat while
-         walking. Bow slightly when greeting.
+ANA via Los Angeles lands you in Narita for $687 round trip — that's $200 cheaper than the JAL direct and the layover is short enough that you won't notice it. If you want to arrive rested and ready to walk all day from the moment your feet hit the pavement, [JAL direct](https://www.jal.com) at $892 is the honest answer.
 
-         What to wear: April averages 55-65°F. Layers are key —
-         warm midday, cool mornings. Comfortable walking shoes
-         essential (you'll walk 10+ miles/day). Temples require
-         covered shoulders.
+**02 — WHERE TO STAY**
 
-         📸 PHOTOGRAPHY & FOOD
-         - Meguro River and Chidorigafuchi for cherry blossoms
-         - Tsukiji Outer Market for street food photography
-         - Golden Gai in Shinjuku — tiny atmospheric bars
-         - Yanaka district — old Tokyo, great for street shots
-         - Fuunji ramen in Shinjuku (cash only, expect a line)
-```
+[Khaosan Tokyo Kabuki](https://www.khaosan-tokyo.com/en/kabuki/) in Asakusa — $35/night. This is not an accident. Asakusa is old Tokyo, the part that remembers what the city looked like before the towers. Walk out the front door and you're eight minutes from Senso-ji at dawn, when it belongs to you and the pigeons.
 
-A separate query like "How do I get from Tokyo to Kyoto on a budget?" would produce a focused response about the Shinkansen, Japan Rail Pass options, and travel tips for that route.
+**03 — BEFORE YOU GO**
+
+*Sumimasen* — say it constantly, for everything. Excuse me, sorry, may I, could you, thank you for your patience. It is the most useful word in the Japanese language and locals will light up when they hear you use it correctly...
+
+**04 — WHAT TO DO**
+
+[Tsukiji Outer Market](https://www.google.com/maps/search/Tsukiji+Outer+Market+Tokyo) at 6am. The inner market moved to Toyosu, but the outer market — the stalls, the tamagoyaki, the fresh tuna on rice in a paper cup — stayed. Get there before 8am or you're eating with the tour groups...
+
+---
+
+*Pack light, walk far, eat everything that has no English menu. Tokyo will do the rest.*
 
 ---
 
