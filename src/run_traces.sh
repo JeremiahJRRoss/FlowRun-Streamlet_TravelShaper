@@ -1,123 +1,167 @@
 #!/bin/bash
-# Run 10 trace queries against TravelShaper for Phoenix tracing
-# Usage: ./run_traces.sh [BASE_URL]
-# Defaults to http://localhost:8000 if no argument provided.
+# ============================================================
+# TravelShaper — Phoenix trace generator
+# Fires all 10 queries against the running server and generates
+# traces viewable in Phoenix at http://localhost:6006
+#
+# Usage:
+#   ./run_traces.sh              # default: http://localhost:8000
+#   ./run_traces.sh http://...   # custom base URL
+# ============================================================
 set -e
 
 BASE_URL="${1:-http://localhost:8000}"
+SLEEP_BETWEEN=3
 
-echo "Running 10 trace queries against ${BASE_URL}"
-echo "Traces will appear in Phoenix UI at http://localhost:6006"
 echo ""
-
-# ---------------------------------------------------------------------------
-# Query 1: Full trip request (all 5 inputs)
-# Expected tools: search_flights, search_hotels, get_cultural_guide, duckduckgo_search
-# ---------------------------------------------------------------------------
-echo "=== Query 1 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "I am flying from San Francisco to Tokyo in mid-October for about 10 days. I want to save money. I love food and photography."}'
+echo "  TravelShaper — Phoenix Trace Generator"
+echo "  Target:  ${BASE_URL}"
+echo "  Phoenix: http://localhost:6006"
+echo "  Queries: 10"
 echo ""
+echo "  Starting in 2 seconds..."
 sleep 2
-
-# ---------------------------------------------------------------------------
-# Query 2: Full trip, different destination, full experience
-# Expected tools: search_flights, search_hotels, get_cultural_guide, duckduckgo_search
-# ---------------------------------------------------------------------------
-echo "=== Query 2 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Plan a trip from JFK to Barcelona, Spain. October 1-10, 2026. Full experience. I care about arts, food, and nightlife."}'
 echo ""
-sleep 2
 
-# ---------------------------------------------------------------------------
-# Query 3: Budget trip, minimal interests
+# ── helper ───────────────────────────────────────────────────
+fire() {
+  local n="$1"
+  local label="$2"
+  local body="$3"
+  echo "┌─ Query ${n} ─ ${label}"
+  curl -s -X POST "${BASE_URL}/chat" \
+    -H "Content-Type: application/json" \
+    -d "${body}" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    text = d.get('response','') or str(d)
+    preview = text[:120].replace('\n',' ')
+    print('│  ✓ ' + preview + ('...' if len(text) > 120 else ''))
+except:
+    print('│  ✗ (parse error or server error)')
+"
+  echo "└─────────────────────────────────────────────────────"
+  echo ""
+  sleep "$SLEEP_BETWEEN"
+}
+
+# ============================================================
+# Query 1 — Full trip, save money, food + photography
+# Expected tools: search_flights, search_hotels, get_cultural_guide, duckduckgo_search
+# ============================================================
+fire 1 "SFO → Tokyo · Save money · Food + Photo" \
+'{
+  "message": "I am planning a trip departing from San Francisco, CA (please identify the nearest major international airport). Destination: Tokyo, Japan. Departure: 2026-10-15. Return: 2026-10-25 (10 days). Budget preference: save money. Interests: food and dining, photography. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
+  "departure": "San Francisco, CA",
+  "destination": "Tokyo, Japan",
+  "preferences": "I want to eat where the locals eat — not a restaurant with an English menu out front. I am happy to point at things and hope for the best."
+}'
+
+# ============================================================
+# Query 2 — Full trip, full experience, arts + nightlife
+# Expected tools: search_flights, search_hotels, get_cultural_guide, duckduckgo_search
+# ============================================================
+fire 2 "NYC → Barcelona · Full experience · Arts + Nightlife" \
+'{
+  "message": "I am planning a trip departing from New York City, NY (please identify the nearest major international airport). Destination: Barcelona, Spain. Departure: 2026-10-01. Return: 2026-10-10 (9 days). Budget preference: full experience. Interests: arts and culture, food and dining, nightlife and events. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
+  "departure": "New York City, NY",
+  "destination": "Barcelona, Spain",
+  "preferences": "This is a 30th birthday trip. I want at least one dinner that I will still be talking about in ten years. Surprise me."
+}'
+
+# ============================================================
+# Query 3 — Budget trip, auto-correction test ("Roam" → Rome)
 # Expected tools: search_flights, search_hotels, get_cultural_guide
-# ---------------------------------------------------------------------------
-echo "=== Query 3 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Cheapest way to get from Chicago to Rome for a week in November? I am trying to spend as little as possible."}'
-echo ""
-sleep 2
+# ============================================================
+fire 3 "Chicago → Roam [sic] · Save money · Auto-correction test" \
+'{
+  "message": "I am planning a trip departing from Chicago, IL (please identify the nearest major international airport). Destination: Roam, Italy. Departure: 2026-11-05. Return: 2026-11-12 (1 week). Budget preference: save money. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
+  "departure": "Chicago, IL",
+  "destination": "Roam, Italy",
+  "preferences": "I am a broke grad student. Every dollar counts. I will eat standing up if I have to."
+}'
 
-# ---------------------------------------------------------------------------
-# Query 4: Destination only, no origin or dates
+# ============================================================
+# Query 4 — Cultural guide only, no origin or dates
 # Expected tools: get_cultural_guide, duckduckgo_search
-# ---------------------------------------------------------------------------
-echo "=== Query 4 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What should I know before visiting Japan?"}'
-echo ""
-sleep 2
+# ============================================================
+fire 4 "Japan etiquette · No origin/dates · Tattoo edge case" \
+'{
+  "message": "I am visiting Japan for the first time next month. What should I know about etiquette, language, what to wear, and what not to do?",
+  "destination": "Japan",
+  "preferences": "I have read that bowing is important but I have no idea when or how much. Also I have a sleeve tattoo — will that be a problem?"
+}'
 
-# ---------------------------------------------------------------------------
-# Query 5: Interest-heavy request
-# Expected tools: duckduckgo_search, possibly get_cultural_guide
-# ---------------------------------------------------------------------------
-echo "=== Query 5 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What are the best photography spots in Lisbon? I also want to find great local food."}'
-echo ""
-sleep 2
+# ============================================================
+# Query 5 — Interest-heavy, already at destination
+# Expected tools: duckduckgo_search, get_cultural_guide
+# ============================================================
+fire 5 "Lisbon · Already there · Photo + Food · No transport" \
+'{
+  "message": "I am already in Lisbon, Portugal. I do not need flights or hotels. I want to know the best photography spots — golden hour, street life, the stuff that does not show up on Instagram. Also where should I eat that is not a tourist trap?",
+  "destination": "Lisbon, Portugal",
+  "preferences": "I shoot film, not digital. I am looking for texture — peeling tiles, old men playing cards, laundry across alleys. That kind of thing."
+}'
 
-# ---------------------------------------------------------------------------
-# Query 6: Flights only
-# Expected tools: search_flights
-# ---------------------------------------------------------------------------
-echo "=== Query 6 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Find me round trip flights from LAX to London Heathrow, departing December 15 2026 and returning December 28 2026."}'
-echo ""
-sleep 2
+# ============================================================
+# Query 6 — Flights only, single tool test
+# Expected tools: search_flights only
+# ============================================================
+fire 6 "LAX → London · Flights only · Single tool" \
+'{
+  "message": "I am planning a trip departing from Los Angeles, CA (please identify the nearest major international airport). Destination: London, United Kingdom. Departure: 2026-12-15. Return: 2026-12-28. Budget preference: save money. Please focus only on flight options — I have accommodation sorted.",
+  "departure": "Los Angeles, CA",
+  "destination": "London, United Kingdom"
+}'
 
-# ---------------------------------------------------------------------------
-# Query 7: Hotels only
-# Expected tools: search_hotels
-# ---------------------------------------------------------------------------
-echo "=== Query 7 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Find me budget hotels in Bangkok for January 5-12 2027. I want the cheapest options."}'
-echo ""
-sleep 2
+# ============================================================
+# Query 7 — Hotels only, single tool test
+# Expected tools: search_hotels only
+# ============================================================
+fire 7 "Bangkok · Hotels only · Single tool" \
+'{
+  "message": "I am already booked on a flight to Bangkok, Thailand. I need budget hotel options only — check-in January 5 2027, check-out January 12 2027. Save money mode. No flights, no cultural guide, just hotels.",
+  "destination": "Bangkok, Thailand",
+  "preferences": "I need AC that actually works and a bathroom I am not scared of. That is the full list of requirements."
+}'
 
-# ---------------------------------------------------------------------------
-# Query 8: Cultural guide only
-# Expected tools: get_cultural_guide
-# ---------------------------------------------------------------------------
-echo "=== Query 8 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "I am visiting Morocco next month. What should I know about etiquette, tipping, and what to wear?"}'
-echo ""
-sleep 2
+# ============================================================
+# Query 8 — Nature + fitness, full experience, long-haul
+# Expected tools: search_flights, search_hotels, get_cultural_guide, duckduckgo_search
+# ============================================================
+fire 8 "Miami → Queenstown · Full experience · Nature + Fitness" \
+'{
+  "message": "I am planning a trip departing from Miami, FL (please identify the nearest major international airport). Destination: Queenstown, New Zealand. Departure: 2026-12-26. Return: 2027-01-09 (2 weeks). Budget preference: full experience. Interests: nature and outdoors, fitness and sports. Please provide a complete travel briefing with hyperlinks for every named place.",
+  "departure": "Miami, FL",
+  "destination": "Queenstown, New Zealand",
+  "preferences": "I want to jump off something tall, run up something steep, and kayak something cold. Southern hemisphere summer is the whole reason for the timing."
+}'
 
-# ---------------------------------------------------------------------------
-# Query 9: Vague / edge case
-# Expected tools: duckduckgo_search (agent should do its best)
-# ---------------------------------------------------------------------------
-echo "=== Query 9 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "I want to go somewhere warm in December. Where should I go?"}'
-echo ""
-sleep 2
+# ============================================================
+# Query 9 — Vague / open-ended, agent chooses destination
+# Expected tools: duckduckgo_search
+# ============================================================
+fire 9 "Somewhere warm · Vague input · Agent chooses" \
+'{
+  "message": "I need a break. I want somewhere warm in February, not too far from the East Coast, cheap to get to, good food, and where I can actually switch off. I do not want to go to Cancun. Surprise me.",
+  "preferences": "I have been staring at a laptop for six months. I want to feel like a human being again."
+}'
 
-# ---------------------------------------------------------------------------
-# Query 10: Domestic trip (US-to-US)
-# Expected tools: search_flights, search_hotels, duckduckgo_search (no cultural guide needed)
-# ---------------------------------------------------------------------------
-echo "=== Query 10 ==="
-curl -s -X POST "${BASE_URL}/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Plan a trip from Seattle to Austin, Texas for SXSW in March 2027. I want the full experience — music, food, and nightlife."}'
-echo ""
+# ============================================================
+# Query 10 — Domestic US, full experience, SXSW
+# Expected tools: search_flights, search_hotels, duckduckgo_search (no cultural guide)
+# ============================================================
+fire 10 "Seattle → Austin · SXSW · Full experience · Domestic" \
+'{
+  "message": "I am planning a trip departing from Seattle, WA (please identify the nearest major international airport). Destination: Austin, Texas. Departure: 2027-03-12. Return: 2027-03-17 (SXSW week). Budget preference: full experience. Interests: nightlife and events, food and dining. Please provide a complete travel briefing with hyperlinks for every named place, venue, hotel, and restaurant.",
+  "departure": "Seattle, WA",
+  "destination": "Austin, Texas",
+  "preferences": "I go to SXSW every year but I always end up at the same venues. I want someone to tell me what I have been missing. Specifically: where are the locals actually going that week?"
+}'
 
+# ============================================================
+echo "  All 10 queries complete."
+echo "  View traces → http://localhost:6006"
+echo "  Run evals  → python3 -m evaluations.run_evals"
 echo ""
-echo "All 10 queries complete. View traces in Phoenix UI at http://localhost:6006"
