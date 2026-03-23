@@ -127,7 +127,47 @@ Every briefing includes a preparation section tailored for American travelers:
 - A [SerpAPI](https://serpapi.com) API key (free tier: 250 searches/month)
 - An [OpenAI](https://platform.openai.com) API key
 
-### Setup
+### The preferred method is to use Docker Compose
+
+** 1. Configure environment variables **
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and add your keys:
+
+```
+OPENAI_API_KEY=your_openai_key_here
+SERPAPI_API_KEY=your_serpapi_key_here
+```
+
+** 2. Docker Compose (includes Phoenix): **
+
+```bash
+docker-compose build --no-cache
+docker-compose up -d
+```
+To stop both containers (TravelShaper & Arize)
+```bash
+docker-compose down
+```
+
+This starts both the TravelShaper API on port 8000 and Phoenix UI on port 6006.
+
+> **Note:** The `docker-compose.yml` is included in the repository. If running Phoenix separately, see the Observability section below.
+
+Build and run:
+
+```bash
+docker build -t travelshaper .
+docker run -p 8000:8000 --env-file .env travelshaper
+```
+
+Or with 
+
+
+### An alternate method is to run the app in a python3 environment
 
 1. Clone the repository:
 
@@ -184,29 +224,6 @@ poetry run uvicorn api:app --reload
 
 The API is now available at `http://localhost:8000`.
 
-### Using Docker
-
-Build and run:
-
-```bash
-docker build -t travelshaper .
-docker run -p 8000:8000 --env-file .env travelshaper
-```
-
-Or with Docker Compose (includes Phoenix):
-
-```bash
-docker-compose build --no-cache
-docker-compose up -d
-```
-To stop both containers (TravelShaper & Arize)
-```bash
-docker-compose down
-```
-
-This starts both the TravelShaper API on port 8000 and Phoenix UI on port 6006.
-
-> **Note:** The `docker-compose.yml` is included in the repository. If running Phoenix separately, see the Observability section below.
 
 ---
 
