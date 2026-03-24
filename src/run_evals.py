@@ -19,6 +19,7 @@ Usage:
 import json
 import os
 import sys
+import threading
 import time
 
 # ── Dependency check ─────────────────────────────────────────
@@ -26,14 +27,19 @@ import time
 # confusing ImportError from deep inside a library.
 
 _missing = []
-for _pkg in ["phoenix", "phoenix.evals", "pandas", "openai"]:
+for _pkg, _label in [
+    ("phoenix", "arize-phoenix"),
+    ("phoenix.evals", "arize-phoenix-evals"),
+    ("pandas", "pandas"),
+    ("openai", "openai"),
+]:
     try:
         __import__(_pkg)
     except ImportError:
-        _missing.append(_pkg)
+        _missing.append(_label)
 if _missing:
     print()
-    print(f"  Missing packages: {', '.join(_missing)}")
+    print(f"  ✗ Missing packages: {', '.join(_missing)}")
     print()
     print("  Install eval dependencies into your venv:")
     print("    pip install arize-phoenix arize-phoenix-evals pandas openai")
@@ -66,35 +72,88 @@ EVAL_MODEL = "gpt-4o"
 PROJECT_NAME = "default"  # Phoenix project name where traces live
 
 
+# ── Heartbeat timer ──────────────────────────────────────────
+# Prints elapsed time every few seconds so you know the script
+# hasn't hung during long llm_classify calls.
+
+
+class Heartbeat:
+    """Background thread that prints elapsed time while a metric is scoring."""
+
+    def __init__(self, label: str, span_count: int, interval: float = 10.0):
+        self.label = label
+        self.span_count = span_count
+        self.interval = interval
+        self.start = time.time()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        while not self._stop.wait(self.interval):
+            elapsed = time.time() - self.start
+            print(f"    ... {self.label} still running ({elapsed:.0f}s elapsed)")
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *args):
+        self._stop.set()
+        self._thread.join(timeout=1)
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 
 def get_spans() -> pd.DataFrame:
     """Pull spans from Phoenix as a DataFrame."""
-    print("  Connecting to Phoenix and pulling spans...")
-    client = Client(endpoint=PHOENIX_BASE)
-    df = client.spans.get_spans_dataframe(project_name=PROJECT_NAME)
-    if df is None or df.empty:
-        print("  ✗ No spans found in Phoenix. Run traces first.")
+    print("  Connecting to Phoenix at", PHOENIX_BASE)
+    try:
+        client = Client(base_url=PHOENIX_BASE)
+        df = client.spans.get_spans_dataframe(project_name=PROJECT_NAME)
+    except Exception as e:
+        print(f"  ✗ Could not connect to Phoenix: {e}")
+        print("    Is the Docker stack running? Check with: docker ps")
         sys.exit(1)
-    print(f"  ✓ Pulled {len(df)} spans")
+
+    if df is None or df.empty:
+        print("  ✗ No spans found in Phoenix.")
+        print("    Generate traces first: python run_traces.py")
+        sys.exit(1)
+
+    print(f"  ✓ Pulled {len(df)} spans from project '{PROJECT_NAME}'")
     return df
 
 
-def run_metric(name: str, df: pd.DataFrame, template: str, model) -> pd.DataFrame:
-    """Run a single LLM-as-judge metric against the spans."""
-    print(f"  Scoring: {name}...")
-    start = time.time()
-    results = llm_classify(
-        dataframe=df,
-        template=template,
-        model=model,
-        rails=["frustrated", "not frustrated"] if "frustration" in name.lower()
-        else ["correct", "incorrect"] if "tool" in name.lower()
-        else ["complete", "incomplete"],
-    )
-    elapsed = time.time() - start
-    print(f"  ✓ {name} complete ({elapsed:.1f}s)")
+def run_metric(
+    name: str,
+    df: pd.DataFrame,
+    template: str,
+    model,
+    rails: list[str],
+) -> pd.DataFrame:
+    """Run a single LLM-as-judge metric with a heartbeat timer."""
+    print(f"  Scoring: {name} ({len(df)} spans × 1 gpt-4o call each)...")
+
+    with Heartbeat(name, len(df)):
+        start = time.time()
+        results = llm_classify(
+            dataframe=df,
+            template=template,
+            model=model,
+            rails=rails,
+        )
+        elapsed = time.time() - start
+
+    # Summarize results
+    if "label" in results.columns:
+        counts = results["label"].value_counts().to_dict()
+        summary_parts = [f"{v} {k}" for k, v in counts.items()]
+        summary_str = ", ".join(summary_parts)
+    else:
+        summary_str = "no labels returned"
+
+    print(f"  ✓ {name} complete in {elapsed:.1f}s — {summary_str}")
     return results
 
 
@@ -120,6 +179,8 @@ def main() -> None:
         print()
         sys.exit(1)
 
+    total_start = time.time()
+
     print()
     print("  TravelShaper — Evaluation Runner")
     print(f"  Phoenix: {PHOENIX_BASE}")
@@ -128,50 +189,56 @@ def main() -> None:
 
     # ── Pull spans ────────────────────────────────────────────
     spans_df = get_spans()
+    print()
 
     # ── Set up the eval model ─────────────────────────────────
     model = OpenAIModel(model=EVAL_MODEL)
 
     # ── Run all three metrics ─────────────────────────────────
-    print()
+    # Each metric defines its own "rails" — the set of labels
+    # the classifier can assign to each span.
+
     results = {}
 
-    frustration_results = run_metric(
+    results["user_frustration"] = run_metric(
         "User Frustration",
         spans_df,
         USER_FRUSTRATION_PROMPT_TEMPLATE,
         model,
+        rails=["frustrated", "not frustrated"],
     )
-    results["user_frustration"] = frustration_results
 
-    tool_results = run_metric(
+    results["tool_correctness"] = run_metric(
         "Tool Usage Correctness",
         spans_df,
         TOOL_CORRECTNESS_PROMPT,
         model,
+        rails=["correct", "incorrect"],
     )
-    results["tool_correctness"] = tool_results
 
-    completeness_results = run_metric(
+    results["answer_completeness"] = run_metric(
         "Answer Completeness",
         spans_df,
         ANSWER_COMPLETENESS_PROMPT,
         model,
+        rails=["complete", "incomplete"],
     )
-    results["answer_completeness"] = completeness_results
 
     # ── Write results back to Phoenix ─────────────────────────
     print()
     print("  Writing results to Phoenix...")
-    client = Client(endpoint=PHOENIX_BASE)
+    client = Client(base_url=PHOENIX_BASE)
 
     for metric_name, result_df in results.items():
-        client.spans.log_span_annotations_dataframe(
-            dataframe=result_df,
-            annotation_name=metric_name,
-            annotator_kind="LLM",
-        )
-        print(f"  ✓ Logged {metric_name}")
+        try:
+            client.spans.log_span_annotations_dataframe(
+                dataframe=result_df,
+                annotation_name=metric_name,
+                annotator_kind="LLM",
+            )
+            print(f"  ✓ Logged {metric_name}")
+        except Exception as e:
+            print(f"  ✗ Failed to log {metric_name}: {e}")
 
     # ── Save local summary ────────────────────────────────────
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
@@ -192,21 +259,24 @@ def main() -> None:
             counts = {}
         summary["metrics"][metric_name] = {
             "total": len(result_df),
-            "label_distribution": counts,
+            "label_distribution": {str(k): int(v) for k, v in counts.items()},
         }
 
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False, default=str)
 
-    # ── Print summary ─────────────────────────────────────────
+    # ── Final summary ─────────────────────────────────────────
+    total_elapsed = time.time() - total_start
+
     print()
+    print(f"  All evaluations complete in {total_elapsed:.0f}s")
     print(f"  Results saved → {filename}")
     print(f"  View in Phoenix → {PHOENIX_BASE}")
     print()
     print("  Summary:")
     for metric_name, metric_data in summary["metrics"].items():
         dist = metric_data["label_distribution"]
-        dist_str = ", ".join(f"{k}: {v}" for k, v in dist.items())
+        dist_str = ", ".join(f"{v} {k}" for k, v in dist.items())
         print(f"    {metric_name}: {dist_str}")
     print()
 
