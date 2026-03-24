@@ -165,6 +165,15 @@ Results are saved to a timestamped JSON file in `src/` (e.g. `trace-results_2026
 
 Once the Docker stack is running and your venv is set up, these are the things you will do most often.
 
+### Access the browser UI
+
+Open [http://localhost:8000](http://localhost:8000) in any browser. The form collects departure, destination, dates, budget mode, interests, and optional preferences. Click "Plan my trip →" to get a full briefing streamed in real time. No login, no setup — the browser talks directly to the same API that curl uses.
+
+### Access Phoenix (tracing UI)
+
+Open [http://localhost:6006](http://localhost:6006) in any browser. Every request to `/chat` or `/chat/stream` generates a trace. Click into any trace to see the full tool call chain — which tools were called, what arguments were passed, how long each step took, and the agent's final response. Phoenix runs as a separate container started by Docker Compose and requires no additional setup.
+
+
 ### Test the API with a single curl request
 
 ```
@@ -187,13 +196,7 @@ curl http://localhost:8000/health
 
 Expected output: `{"status":"ok"}`
 
-### Access the browser UI
 
-Open [http://localhost:8000](http://localhost:8000) in any browser. The form collects departure, destination, dates, budget mode, interests, and optional preferences. Click "Plan my trip →" to get a full briefing streamed in real time. No login, no setup — the browser talks directly to the same API that curl uses.
-
-### Access Phoenix (tracing UI)
-
-Open [http://localhost:6006](http://localhost:6006) in any browser. Every request to `/chat` or `/chat/stream` generates a trace. Click into any trace to see the full tool call chain — which tools were called, what arguments were passed, how long each step took, and the agent's final response. Phoenix runs as a separate container started by Docker Compose and requires no additional setup.
 
 ### Query trace information from the terminal
 
