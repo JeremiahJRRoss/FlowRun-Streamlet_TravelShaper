@@ -50,7 +50,7 @@ docker compose version    # should print Docker Compose version 2+
 
 If `docker compose` (with a space) does not work but `docker-compose` (with a hyphen) does, you have the legacy v1 CLI — that works too. Substitute `docker-compose` wherever you see `docker compose` below.
 
-- **Python 3.11+** 
+- **Python 3.11+** — required for Option C only. Check with `python3 --version`.
 
 ### Option A: Docker Compose (manual steps)
 
@@ -301,6 +301,17 @@ source .venv/bin/activate
 pytest tests/ -v
 ```
 
+### If you are using Docker
+
+The `docker-compose.yml` does not include a dedicated test service, so you run pytest inside the existing `travelshaper` container:
+
+```bash
+cd src
+docker compose exec travelshaper pytest tests/ -v
+```
+
+If the container is not already running, start it first with `docker compose up -d`, then run the command above.
+
 Expected output: **14 tests passing**.
 
 ---
@@ -542,10 +553,18 @@ chmod +x run_traces.sh
 
 This fires 11 queries covering every tool combination, both budget voices, auto-correction, vague inputs, past-date error handling, and edge cases. All dates in the queries are computed dynamically relative to today, so the script never goes stale. Each query generates a trace visible in Phoenix at [http://localhost:6006](http://localhost:6006).
 
+The script detects whether you are running macOS (BSD `date`) or Linux (GNU `date`) and uses the correct syntax automatically. If you are on macOS and see `date: illegal option -- d`, you are running an older version of the script that only supported Linux — replace it with the current version from the repository.
+
 You can optionally pass a custom base URL:
 
 ```bash
 ./run_traces.sh http://localhost:8000
+```
+
+Alternatively, if you are running the Docker Compose stack and want to run the trace script inside the container (which is Linux and always has GNU `date`), you can do so — but note that from inside the container, the server is `localhost:8000` and this works because the curl calls go to the same container's network:
+
+```bash
+docker compose exec travelshaper bash -c "cd /app && chmod +x run_traces.sh && ./run_traces.sh http://localhost:8000"
 ```
 
 ### Run evaluations
@@ -824,6 +843,8 @@ docker compose up -d
 **`ModuleNotFoundError: No module named 'phoenix'`** — the Phoenix packages are not installed. In venv mode, install them with pip (see the venv setup section above). In Docker mode, they are pre-installed in the container.
 
 **`run_traces.sh` fails with import errors** — make sure you are running the script from inside the `src/` directory. The script calls `python3 -m scripts.export_spans` and `python3 -m evaluations.run_evals`, which require `src/` as the working directory for Python's module resolution to work.
+
+**`run_traces.sh` fails with `date: illegal option -- d`** — you are running the script on macOS, which uses BSD `date` instead of GNU `date`. The current version of the script handles both platforms automatically. If you see this error, you have an older version of the script that only supported Linux. Replace `run_traces.sh` with the current version from the repository, which detects your platform and uses the correct date syntax. Alternatively, run the script inside the Docker container where GNU `date` is always available: `docker compose exec travelshaper bash -c "cd /app && ./run_traces.sh"`.
 
 ---
 
