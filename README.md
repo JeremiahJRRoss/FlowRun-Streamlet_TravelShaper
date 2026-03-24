@@ -15,7 +15,7 @@ TravelShaper needs two API keys: an OpenAI key (powers the agent and validation 
 - **OpenAI** (required) — [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 - **SerpAPI** (required for flights, hotels, cultural guide) — [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key). Free tier: 250 searches/month (~60–125 full briefings). Without this key, the agent falls back to DuckDuckGo for everything — functional, but limited.
 
-You will create a `.env` file with these keys during setup. The `.env` file is listed in `.gitignore` to avoid being committed, but be aware of the contents of every commit so that you never leak authentication information. 
+You will create a `.env` file with these keys during setup. The `.env` file is listed in `.gitignore` and will never be committed.
 
 ---
 
@@ -92,55 +92,66 @@ When the stack is running:
 To stop the stack: `docker compose down`. To rebuild after code changes: `docker compose down && docker compose up -d --build`.
 
 ---
-## Set Up a Python environment for generating traces
 
-The trace script runs on your local machine and only needs the `requests` library — .
+## Set Up Python for Traces and Evaluations
+
+Traces and evaluations both run on your local machine, outside Docker. They use a Python virtual environment inside `src/`. You only need to set this up once.
+
 **Step 1.** Open a second terminal and navigate to `src/`:
+
 ```
 cd src
 ```
 
-**Step 2.** Create a virtual environment:
+**Step 2.** Create the virtual environment:
 
 On macOS or Linux:
+
 ```
 python3 -m venv .venv
 ```
 
 On Windows:
+
 ```
 python -m venv .venv
 ```
 
-This creates a `.venv/` directory inside `src/` that isolates dependencies from your system Python (and from other distributions like Anaconda). The `.venv/` directory is listed in `.gitignore` and will not be committed.
+This creates a `.venv/` directory inside `src/` that isolates all project dependencies from your system Python (and from other distributions like Anaconda). The `.venv/` directory is listed in `.gitignore` and will not be committed.
 
 **Step 3.** Activate the virtual environment:
 
 On macOS or Linux:
+
 ```
 source .venv/bin/activate
 ```
 
 On Windows (Command Prompt):
+
 ```
 .venv\Scripts\activate.bat
 ```
 
 On Windows (PowerShell):
+
 ```
 .venv\Scripts\Activate.ps1
 ```
 
 If PowerShell blocks the script with a security error, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` first, then try again.
 
-Your terminal prompt should now show `(.venv)` at the beginning. If you open a new terminal, you will need to activate it again — the activation only applies to the current shell session.
+Your terminal prompt should now show `(.venv)` at the beginning. This tells you the venv is active. If you open a new terminal, you will need to activate it again — the activation only applies to the current shell session.
 
-**Step 4.** Install the single dependency:
+**Step 4.** Install dependencies:
+
 ```
-pip install requests
+pip install requests arize-phoenix arize-phoenix-evals pandas openai
 ```
 
-In future terminal sessions, just activate the venv — you do not need to reinstall anything:
+The `requests` package is all that `run_traces.py` needs. The remaining packages are for `run_evals.py`, which uses the Phoenix client to pull traces and the Phoenix evals library to score them with gpt-4o. If your system has Anaconda installed, make sure your venv is not inheriting Anaconda's packages — run `conda deactivate` before activating your venv if you see `ValueError: numpy.dtype size changed`.
+
+You only need to install these once. In future terminal sessions, just activate the venv:
 
 On macOS or Linux: `cd src && source .venv/bin/activate`
 
@@ -148,31 +159,96 @@ On Windows: `cd src` then `.venv\Scripts\activate.bat` or `.venv\Scripts\Activat
 
 ---
 
-## Generate Traces
+## Run Tests
 
-Make sure you are in the `src/` directory with the venv active, and the Docker stack is running. Then:
+Make sure you are in the `src/` directory with the venv active (`(.venv)` in your prompt). Tests require the full project dependencies (Poetry + openai). If you set up the venv using the lightweight install above, you will also need:
+
+```
+pip install poetry==1.8.2
+poetry install -E dev
+```
+
+Then:
+
+```
+pytest tests/ -v
+```
+
+Expected output: **14 tests passing** across three test files (`test_tools.py`, `test_agent.py`, `test_api.py`). All tests are mocked — no API keys consumed, no running server needed. This command is identical on macOS, Linux, and Windows once the venv is active.
+
+---
+
+## Generate Traces and Run Evaluations
+
+This is the core observability workflow: generate traces by sending real queries to the agent, then score those traces with three LLM-as-judge metrics. Both scripts run from the same venv in the same terminal session.
+
+Make sure you are in the `src/` directory with the venv active and the Docker stack is running.
+
+### Generate traces
+
 ```
 python run_traces.py
 ```
 
 This fires 11 real queries against the server at `localhost:8000`, covering every tool combination, both budget voices, auto-correction, vague inputs, past-date error handling, and edge cases. All dates are computed dynamically relative to today so the script never goes stale.
 
-Results are saved to a timestamped JSON file in `src/` (e.g. `trace-results_2026-03-23_14-05-32.json`). Each entry contains the request body, expected tools, response text, and status. Traces are also recorded in Phoenix at [http://localhost:6006](http://localhost:6006).
+Results are saved to a timestamped JSON file in `src/` (e.g. `trace-results_2026-03-23_14-05-32.json`). Traces are also recorded in Phoenix at [http://localhost:6006](http://localhost:6006).
+
+You can limit the number of queries for a quick smoke test:
+
+```
+python run_traces.py 3            # run first 3 queries only
+python run_traces.py all          # run all 11 (the default)
+```
+
+### Run evaluations
+
+Once traces exist in Phoenix, score them:
+
+```
+python run_evals.py
+```
+
+The script connects to Phoenix at `localhost:6006`, pulls the most recent traces, groups all spans by trace ID to identify the root span (user input + agent output) and child spans (actual tool calls), and scores each trace against three metrics. The tool correctness evaluator receives the real list of tools that were called — extracted from the trace data, not inferred from the response text.
+
+Each trace is scored by three separate gpt-4o calls (one per metric). The script reads your `OPENAI_API_KEY` from the `.env` file in `src/`. A typical run against the 11 traces from `run_traces.py` takes 1–3 minutes. A heartbeat prints every 10 seconds so you know it hasn't hung.
+
+You can limit how many traces to evaluate:
+
+```
+python run_evals.py              # evaluate 11 most recent traces (default)
+python run_evals.py 5            # evaluate 5 most recent traces
+python run_evals.py all          # evaluate all traces in Phoenix
+```
+
+Results are written back to Phoenix as annotations on the root spans and saved to a local JSON summary file (e.g. `eval-results_2026-03-23_14-08-12.json`).
+
+### The typical session
+
+The intended sequence is: generate traces, then immediately score them. Both commands run from the same venv, same directory, same terminal:
+
+```
+python run_traces.py
+python run_evals.py
+```
+
+Then open [http://localhost:6006](http://localhost:6006) and click the **Evaluations** tab to see scores alongside traces.
+
+### What the three metrics measure
+
+**User Frustration** detects responses that are technically correct but experientially poor — curt, dismissive, or structured in a way that forces extra work. Any traces flagged as frustrated are worth investigating for system prompt adjustments.
+
+**Tool Usage Correctness** evaluates whether the agent called the right tools for the request. Unlike a naive approach that infers tool usage from the response text, this metric extracts the actual tool calls from the trace's child spans and passes them to the evaluator. This means it can correctly distinguish between "the right tool was called but failed" and "the wrong tool was called" — two very different problems with very different fixes.
+
+**Answer Completeness** checks whether the response covers everything the user asked for, with scope awareness. A flights-only response is complete for a flights-only request. A full-trip query that's missing hotel recommendations is incomplete. The evaluator first determines what the user actually asked for, then checks each element.
+
+For the full evaluation prompt text and design rationale, see [docs/evaluation-prompts.md](src/docs/evaluation-prompts.md).
 
 ---
 
 ## Quick Reference
 
 Once the Docker stack is running and your venv is set up, these are the things you will do most often.
-
-### Access the browser UI
-
-Open [http://localhost:8000](http://localhost:8000) in any browser. The form collects departure, destination, dates, budget mode, interests, and optional preferences. Click "Plan my trip →" to get a full briefing streamed in real time. No login, no setup — the browser talks directly to the same API that curl uses.
-
-### Access Phoenix (tracing UI)
-
-Open [http://localhost:6006](http://localhost:6006) in any browser. Every request to `/chat` or `/chat/stream` generates a trace. Click into any trace to see the full tool call chain — which tools were called, what arguments were passed, how long each step took, and the agent's final response. Phoenix runs as a separate container started by Docker Compose and requires no additional setup.
-
 
 ### Test the API with a single curl request
 
@@ -196,7 +272,13 @@ curl http://localhost:8000/health
 
 Expected output: `{"status":"ok"}`
 
+### Access the browser UI
 
+Open [http://localhost:8000](http://localhost:8000) in any browser. The form collects departure, destination, dates, budget mode, interests, and optional preferences. Click "Plan my trip →" to get a full briefing streamed in real time. No login, no setup — the browser talks directly to the same API that curl uses.
+
+### Access Phoenix (tracing UI)
+
+Open [http://localhost:6006](http://localhost:6006) in any browser. Every request to `/chat` or `/chat/stream` generates a trace. Click into any trace to see the full tool call chain — which tools were called, what arguments were passed, how long each step took, and the agent's final response. Phoenix runs as a separate container started by Docker Compose and requires no additional setup.
 
 ### Query trace information from the terminal
 
@@ -213,6 +295,17 @@ curl -s http://localhost:6006/v1/traces?limit=5 | python3 -m json.tool
 ```
 
 If you prefer to work with trace data offline, `run_traces.py` saves every query's input and response to a timestamped JSON file in the `src/` directory.
+
+### Generate traces and run evaluations
+
+From the `src/` directory with the venv active:
+
+```
+python run_traces.py
+python run_evals.py
+```
+
+The first script fires 11 queries against the server and records traces in Phoenix. The second scores those traces with three LLM-as-judge metrics (frustration, tool correctness, completeness) and writes the results back to Phoenix. For a quick smoke test, `python run_traces.py 3` fires only the first 3 queries, and `python run_evals.py 5` evaluates only the 5 most recent traces.
 
 ---
 
@@ -437,45 +530,6 @@ curl http://localhost:8000/health
 
 ---
 
-## Run Evaluations
-
-The evaluation pipeline scores collected traces using three LLM-as-judge metrics: User Frustration, Tool Usage Correctness, and Answer Completeness. Each metric sends the user's original message and the agent's full response to gpt-4o with a classification prompt, and gpt-4o returns a label (pass/fail) with an explanation. Results are written back to Phoenix as annotations on the original traces.
-
-### How to run evaluations
-
-The evaluation script requires Phoenix packages (`arize-phoenix-evals`, `phoenix.evals`) that are installed inside the Docker container but not in your local Python environment. Because of this, evaluations run inside the TravelShaper container — not on your local machine.
-
-The container connects to the Phoenix container over Docker's internal network to pull traces, then calls the OpenAI API to score each one. Your `.env` file provides the OpenAI key that powers the scoring calls.
-
-Make sure the Docker stack is running and you have already generated traces (either through the browser UI, curl requests, or `run_traces.py`). Then:
-```
-docker compose exec travelshaper python -m evaluations.run_evals
-```
-
-This pulls the most recent traces from Phoenix, scores each one against all three metrics, and writes the results back. The command takes 1–3 minutes depending on how many traces are stored — each trace requires three separate gpt-4o calls (one per metric).
-
-### Where to see results
-
-Open Phoenix at [http://localhost:6006](http://localhost:6006) and click the **Evaluations** tab. Each trace now shows its scores for all three metrics alongside the original tool call chain and agent response. You can filter by metric, sort by score, and click into any trace to read the classifier's explanation of why it passed or failed.
-
-Any traces flagged as frustrated are automatically collected into a `frustrated_interactions` dataset within Phoenix, which serves as a ready-made review queue.
-
-### What the three metrics measure
-
-**User Frustration** detects responses that are technically correct but experientially poor — curt, dismissive of the user's constraints, or structured in a way that forces extra work to extract the needed information. This metric uses Phoenix's built-in `USER_FRUSTRATION_PROMPT_TEMPLATE`. The file `evaluations/metrics/frustration.py` contains a custom reference prompt (`USER_FRUSTRATION_PROMPT_CUSTOM`) that was used during development but is not used in the production pipeline.
-
-**Tool Usage Correctness** evaluates whether the agent called the right tools for the request. A full-trip query should trigger flights, hotels, cultural guide, and web search. A "flights only" query should trigger only the flight tool. A user who says "I'm already there" should not trigger a flight search at all. The custom prompt in `evaluations/metrics/tool_correctness.py` understands these relationships and flags cases where the agent over-called or under-called its tools.
-
-**Answer Completeness** checks whether the response covers everything the user asked for, with scope awareness. If a user asked for flights, hotels, and dining recommendations, all three must appear in the response. If a user asked for flights only, a response containing only flights is complete — not incomplete. The custom prompt in `evaluations/metrics/answer_completeness.py` first determines what the user actually requested, then checks each element against the response.
-
-### Reading the results together
-
-A trace that passes tool correctness and completeness but fails frustration tells you the system is mechanically sound but tonally off — the system prompt needs voice work. A trace that fails tool correctness will almost always also fail completeness, because missing tools produce missing data. The tool flag identifies the root cause; the completeness flag shows the consequence the user would experience.
-
-For the full evaluation prompt text and the rationale behind each metric, see [docs/evaluation-prompts.md](src/docs/evaluation-prompts.md).
-
----
-
 ## Project Structure
 
 ```
@@ -489,9 +543,9 @@ src/
 │   ├── hotels.py                   # search_hotels (SerpAPI Google Hotels)
 │   └── cultural_guide.py          # get_cultural_guide (scoped Google search)
 ├── evaluations/
-│   ├── run_evals.py                # Phoenix evaluation runner (3 metrics)
+│   ├── run_evals.py                # Legacy evaluation runner (prefer run_evals.py at project root)
 │   └── metrics/
-│       ├── frustration.py          # Reference frustration prompt (production uses Phoenix built-in)
+│       ├── frustration.py          # Reference frustration prompt
 │       ├── answer_completeness.py  # ANSWER_COMPLETENESS_PROMPT
 │       └── tool_correctness.py     # TOOL_CORRECTNESS_PROMPT
 ├── scripts/
@@ -513,8 +567,9 @@ src/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── pyproject.toml
-├── run_traces.py                   # 11 trace queries + JSON results (cross-platform)
-├── run_traces.sh                   # 11 trace queries (bash, legacy)
+├── run_traces.py                   # Trace generator — 11 queries, cross-platform Python
+├── run_evals.py                    # Evaluation runner — 3 LLM-as-judge metrics, trace-level
+├── run_traces.sh                   # Trace generator (bash, legacy — prefer run_traces.py)
 ├── setup.sh                        # One-command setup (Docker path, macOS/Linux only)
 ├── RUNNING.md                      # Extended setup guide (some sections outdated — prefer this README)
 └── CHANGELOG.md
