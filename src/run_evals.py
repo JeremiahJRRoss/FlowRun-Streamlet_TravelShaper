@@ -326,41 +326,48 @@ def get_trace_records(client):
         print(f"  Evaluating {limit_label} traces")
 
     records = []
+    skipped = 0
     tool_detail_log = []  # For the JSON summary
 
     for trace_id, group in traces:
-        # ── Find root span ────────────────────────────────────
-        # Root span has no parent (NaN, None, empty string, or "None")
-        if parent_col and parent_col in group.columns:
-            root_mask = (
-                group[parent_col].isna()
-                | (group[parent_col].astype(str).str.strip() == "")
-                | (group[parent_col].astype(str) == "None")
-                | (group[parent_col].astype(str) == "0")
-            )
-            root_spans = group[root_mask]
-        else:
-            # If no parent column, take the first span as root
-            root_spans = group.head(1)
+        # ── Find the best span to evaluate ─────────────────────
+        # The trace may contain multiple spans:
+        #   travelshaper.request  (HTTP layer — often has NO input/output)
+        #   LangGraph             (agent layer — has the conversation)
+        #   search_flights        (tool — has tool-specific I/O)
+        #   search_hotels         (tool)
+        #   ...
+        #
+        # We need the span with the actual user message and agent
+        # response. That's usually the LangGraph/agent span, NOT
+        # the HTTP request span. Strategy: find all spans that have
+        # both non-empty input AND output, then pick the one with
+        # the longest output (the full travel briefing).
 
-        if root_spans.empty:
-            # Fallback: use the span with the longest output
-            # (the root/agent span usually has the full briefing)
-            if output_col in group.columns:
-                output_lengths = group[output_col].astype(str).str.len()
-                root_spans = group.loc[[output_lengths.idxmax()]]
-            else:
-                continue
+        candidates = []
+        for idx, span in group.iterrows():
+            span_input = str(span.get(input_col, "")) if pd.notna(span.get(input_col)) else ""
+            span_output = str(span.get(output_col, "")) if pd.notna(span.get(output_col)) else ""
+            if span_input.strip() and span_output.strip():
+                candidates.append({
+                    "idx": idx,
+                    "span": span,
+                    "input": span_input,
+                    "output": span_output,
+                    "output_len": len(span_output),
+                    "name": str(span.get(name_col, "")) if name_col else "",
+                })
 
-        root = root_spans.iloc[0]
-
-        # Get input and output from root span
-        root_input = str(root.get(input_col, "")) if pd.notna(root.get(input_col)) else ""
-        root_output = str(root.get(output_col, "")) if pd.notna(root.get(output_col)) else ""
-
-        # Skip traces with empty input or output
-        if not root_input.strip() or not root_output.strip():
+        if not candidates:
+            skipped += 1
             continue
+
+        # Pick the candidate with the longest output — that's the
+        # agent's full briefing, not a tool's raw API response.
+        best = max(candidates, key=lambda c: c["output_len"])
+        root_input = best["input"]
+        root_output = best["output"]
+        root_span_id = best["span"].get("_span_id", best["idx"])
 
         # ── Find tool spans ───────────────────────────────────
         # Match child span names against known tool names
@@ -393,9 +400,6 @@ def get_trace_records(client):
 
         tools_str = ", ".join(unique_tools) if unique_tools else "(no tools called)"
 
-        # Get the root span's ID for attaching annotations later
-        root_span_id = root.get("_span_id", "")
-
         records.append({
             "span_id": root_span_id,
             "trace_id": trace_id,
@@ -424,6 +428,8 @@ def get_trace_records(client):
 
     print(f"  Assembled {len(eval_df)} trace-level records "
           f"(from {len(df)} total spans)")
+    if skipped:
+        print(f"  Skipped {skipped} traces with no input/output data")
     print()
 
     # Print a preview of what tools were found per trace
