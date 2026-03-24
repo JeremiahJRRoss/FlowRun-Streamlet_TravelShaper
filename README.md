@@ -37,82 +37,196 @@ The `.env` file is listed in `.gitignore` and will never be committed. If you se
 
 ## Choose How to Run
 
-There are two ways to run TravelShaper. Pick the one that fits your situation — they produce identical results.
+There are three ways to run TravelShaper. All three produce identical results — the app, the API, and the tracing stack work the same regardless of how you start them. Pick the one that matches your comfort level and tooling.
 
-### Option A: Docker Compose (recommended)
+**Prerequisites for all options:**
 
-This is the fastest path. Docker handles Python versions, dependencies, and Phoenix in one command. You do not need a virtual environment.
+- **Docker** and **Docker Compose** — required for Options A and B, and recommended for Option C if you want Phoenix tracing. Install from [docs.docker.com/get-docker](https://docs.docker.com/get-docker/). After installing, verify both are available:
+
+```bash
+docker --version          # should print Docker version 20+
+docker compose version    # should print Docker Compose version 2+
+```
+
+If `docker compose` (with a space) does not work but `docker-compose` (with a hyphen) does, you have the legacy v1 CLI — that works too. Substitute `docker-compose` wherever you see `docker compose` below.
+
+- **Python 3.11+** — required for Option C only. Check with `python3 --version`.
+
+### Option A: Docker Compose (manual steps)
+
+Use this if you want full control over each step — building the containers yourself, starting the stack yourself, and seeing exactly what happens at each stage. Nothing runs until you tell it to.
+
+**Step 1.** Navigate into the `src/` directory. All commands assume you are inside `src/`, which is where the `Dockerfile`, `docker-compose.yml`, and application code live:
 
 ```bash
 cd src
-chmod +x setup.sh
-./setup.sh
 ```
 
-The setup script checks prerequisites (it detects both `docker compose` v2 and legacy `docker-compose`), prompts for API keys if `.env` does not exist yet, builds the containers, and starts both services. When it finishes:
+**Step 2.** Create your `.env` file if you have not already (see the "Before You Begin" section above):
+
+```bash
+cp .env.example .env
+# Open .env in your editor and add your OpenAI and SerpAPI keys
+```
+
+**Step 3.** Build the Docker images. The `--no-cache` flag is optional on the first build, but recommended after any code changes to ensure Docker does not serve stale cached layers:
+
+```bash
+docker compose build --no-cache
+```
+
+This will take 1–3 minutes. Docker installs Python, Poetry, all project dependencies, the Phoenix tracing packages, and the OpenAI SDK inside the container. You do not need any of these installed on your host machine.
+
+**Step 4.** Start both services in the background. The `-d` flag runs the containers detached so you get your terminal back:
+
+```bash
+docker compose up -d
+```
+
+**Step 5.** Verify the app is running:
+
+```bash
+curl http://localhost:8000/health
+# Expected output: {"status":"ok"}
+```
+
+If you get a "connection refused" error, the container may still be starting. Wait 10–15 seconds and try again — the Dockerfile includes a health check that retries automatically.
+
+When both services are up:
 
 | Service | URL |
 |---------|-----|
 | TravelShaper (app + API) | [http://localhost:8000](http://localhost:8000) |
 | Phoenix (tracing UI) | [http://localhost:6006](http://localhost:6006) |
 
-To stop everything:
+Open [http://localhost:8000](http://localhost:8000) in your browser to use the trip planning form, or use curl to hit the API directly.
+
+**Stopping the stack:**
 
 ```bash
 docker compose down
-# or, if using legacy Docker Compose:
-docker-compose down
 ```
 
-To rebuild after code changes (Docker caches aggressively — this ensures fresh containers):
+**Rebuilding after code changes:**
 
 ```bash
+docker compose down
 docker compose build --no-cache
 docker compose up -d
 ```
 
-### Option B: Local virtual environment
+### Option B: Setup script (automated Docker path)
 
-Use this if you prefer working outside Docker, want hot-reload during development, or need to debug with local tools. A virtual environment is required — do not install into your system Python.
+Use this if you want the same Docker Compose result as Option A but prefer a single command that handles everything — prerequisite checks, API key configuration, building, and starting. This is the fastest path from clone to running app.
+
+**Step 1.** Navigate into the `src/` directory:
 
 ```bash
 cd src
+```
+
+**Step 2.** Make the setup script executable. This is required the first time because Git does not always preserve file permissions:
+
+```bash
+chmod +x setup.sh
+```
+
+**Step 3.** Run the script:
+
+```bash
+./setup.sh
+```
+
+The script will walk you through each step interactively. Specifically, it will check that Docker and Docker Compose are installed (it detects both `docker compose` v2 and legacy `docker-compose` automatically), prompt you for your OpenAI and SerpAPI keys if no `.env` file exists yet, build the containers with `--no-cache`, start both services, and wait for the health check to pass before printing a summary.
+
+When it finishes:
+
+| Service | URL |
+|---------|-----|
+| TravelShaper (app + API) | [http://localhost:8000](http://localhost:8000) |
+| Phoenix (tracing UI) | [http://localhost:6006](http://localhost:6006) |
+
+**Stopping the stack** works the same as Option A:
+
+```bash
+docker compose down
+```
+
+### Option C: Local virtual environment
+
+Use this if you prefer working outside Docker, want hot-reload during development, or need to debug with local tools. This path requires Python 3.11+ installed on your machine. A virtual environment is required — do not install into your system Python.
+
+**Step 1.** Navigate into the `src/` directory:
+
+```bash
+cd src
+```
+
+**Step 2.** Create your `.env` file if you have not already:
+
+```bash
+cp .env.example .env
+# Open .env in your editor and add your OpenAI and SerpAPI keys
+```
+
+**Step 3.** Create and activate a virtual environment. This isolates all project dependencies from your system Python:
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate       # macOS / Linux
 # .venv\Scripts\activate        # Windows
+```
+
+Your terminal prompt should now show `(.venv)` at the beginning. All subsequent commands assume the venv is active. If you open a new terminal window, you will need to run `source .venv/bin/activate` again.
+
+**Step 4.** Install pip and Poetry inside the venv:
+
+```bash
 pip install --upgrade pip
 pip install poetry==1.8.2
+```
+
+**Step 5.** Install project dependencies using Poetry:
+
+```bash
 poetry install -E dev
 ```
 
-**Important:** The `openai` SDK is not declared in `pyproject.toml` (it is installed via pip in the Dockerfile for the Docker path). You must install it separately in your venv:
+The `-E dev` flag includes test dependencies (pytest, httpx). This step takes 1–2 minutes on a fresh install.
+
+**Step 6.** Install the OpenAI SDK. This is required but is not declared in `pyproject.toml` (it is installed via pip in the Dockerfile for the Docker paths). Without it, the server will crash on startup with `ModuleNotFoundError: No module named 'openai'`, because `api.py` imports it for the place and preference validation classifiers:
 
 ```bash
 pip install openai
 ```
 
-Without this, the server will crash on startup with `ModuleNotFoundError: No module named 'openai'`, because `api.py` imports `from openai import OpenAI` for the place and preference validation classifiers.
-
-Start the server:
+**Step 7.** Start the server. The `--reload` flag watches for file changes and restarts automatically, which is useful during development:
 
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The app is now running at [http://localhost:8000](http://localhost:8000).
+The app is now running at [http://localhost:8000](http://localhost:8000). Verify with:
 
-**Phoenix tracing** (optional in venv mode): the Phoenix packages have Python version constraints that conflict with Poetry's resolver. Install them directly with pip after Poetry finishes:
+```bash
+curl http://localhost:8000/health
+# Expected output: {"status":"ok"}
+```
+
+**Step 8 (optional). Enable Phoenix tracing.** The Phoenix packages have Python version constraints that conflict with Poetry's resolver on Python 3.11/3.12, so they must be installed directly with pip rather than through Poetry:
 
 ```bash
 pip install arize-phoenix arize-phoenix-evals arize-phoenix-otel \
             openinference-instrumentation-langchain
 ```
 
-You will also need to run the Phoenix server separately. The simplest way is Docker:
+You will also need to run the Phoenix server itself. The simplest way is Docker (even if you are running the app locally, Phoenix can still run in a container):
 
 ```bash
-docker run -p 6006:6006 arizephoenix/phoenix:latest
+docker run -d -p 6006:6006 arizephoenix/phoenix:latest
 ```
+
+The `-d` flag runs Phoenix detached. Traces will appear at [http://localhost:6006](http://localhost:6006) once you send a query to the app. If you skip this step, the app still works — it just silently skips tracing because the Phoenix instrumentation in `agent.py` is wrapped in a `try/except ImportError` block.
 
 ---
 
