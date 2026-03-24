@@ -363,7 +363,7 @@ There is a pattern in how TravelShaper makes its choices, and the pattern is wor
 - Cultural guidance is practical advice based on common norms, not absolute rules.
 - Designed for English-speaking American travellers; guidance assumes U.S. norms as baseline.
 - Single-turn: no conversation memory between requests.
-- SerpAPI free tier supports ~60–125 full briefings per month.
+- SerpAPI free tier supports ~60–125 full briefings per month. This service should be replaced for production to avoid potential legal issues
 - Voice routing uses keyword matching — the budget voice triggers on `save money`, `budget`, `cheapest`, or `spend as little` appearing in the message. Synonyms like "frugal" or "inexpensive" will not trigger it and will default to the full-experience voice.
 
 ---
