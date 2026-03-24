@@ -1,36 +1,53 @@
 #!/bin/bash
 # ============================================================
 # TravelShaper — Phoenix trace generator
-# Fires all 10 queries against the running server and generates
+# Fires all 11 queries against the running server and generates
 # traces viewable in Phoenix at http://localhost:6006
 #
 # Usage:
 #   ./run_traces.sh              # default: http://localhost:8000
 #   ./run_traces.sh http://...   # custom base URL
+#
+# Works on both macOS (BSD date) and Linux (GNU date).
 # ============================================================
 set -e
 
 BASE_URL="${1:-http://localhost:8000}"
 SLEEP_BETWEEN=3
 
+# ── cross-platform date arithmetic ──────────────────────────
+# macOS ships BSD date, which uses -v for offsets: date -v+30d
+# Linux ships GNU date, which uses -d for offsets: date -d "+30 days"
+# We detect which one we have and define a helper function.
+
+if date -v+1d +%Y-%m-%d >/dev/null 2>&1; then
+  # BSD date (macOS)
+  future_date() { date -v+"$1"d +%Y-%m-%d; }
+  past_date()   { date -v-"$1"d +%Y-%m-%d; }
+else
+  # GNU date (Linux)
+  future_date() { date -d "+$1 days" +%Y-%m-%d; }
+  past_date()   { date -d "-$1 days" +%Y-%m-%d; }
+fi
+
 # ── dynamic date generation ──────────────────────────────────
 # All dates are computed relative to today so queries never go stale.
-Q1_DEP=$(date -d "+30 days" +%Y-%m-%d)
-Q1_RET=$(date -d "+40 days" +%Y-%m-%d)
-Q2_DEP=$(date -d "+45 days" +%Y-%m-%d)
-Q2_RET=$(date -d "+54 days" +%Y-%m-%d)
-Q3_DEP=$(date -d "+60 days" +%Y-%m-%d)
-Q3_RET=$(date -d "+67 days" +%Y-%m-%d)
-Q6_DEP=$(date -d "+90 days" +%Y-%m-%d)
-Q6_RET=$(date -d "+103 days" +%Y-%m-%d)
-Q7_CHECKIN=$(date -d "+120 days" +%Y-%m-%d)
-Q7_CHECKOUT=$(date -d "+127 days" +%Y-%m-%d)
-Q8_DEP=$(date -d "+150 days" +%Y-%m-%d)
-Q8_RET=$(date -d "+164 days" +%Y-%m-%d)
-Q10_DEP=$(date -d "+180 days" +%Y-%m-%d)
-Q10_RET=$(date -d "+185 days" +%Y-%m-%d)
-Q11_DEP=$(date -d "-30 days" +%Y-%m-%d)   # past — error handling test
-Q11_RET=$(date -d "-23 days" +%Y-%m-%d)
+Q1_DEP=$(future_date 30)
+Q1_RET=$(future_date 40)
+Q2_DEP=$(future_date 45)
+Q2_RET=$(future_date 54)
+Q3_DEP=$(future_date 60)
+Q3_RET=$(future_date 67)
+Q6_DEP=$(future_date 90)
+Q6_RET=$(future_date 103)
+Q7_CHECKIN=$(future_date 120)
+Q7_CHECKOUT=$(future_date 127)
+Q8_DEP=$(future_date 150)
+Q8_RET=$(future_date 164)
+Q10_DEP=$(future_date 180)
+Q10_RET=$(future_date 185)
+Q11_DEP=$(past_date 30)    # past — error handling test
+Q11_RET=$(past_date 23)
 
 echo ""
 echo "  TravelShaper — Phoenix Trace Generator"
