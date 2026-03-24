@@ -298,11 +298,13 @@ Then open [http://localhost:6006](http://localhost:6006) and click the **Evaluat
 For the full evaluation prompt text and design rationale, see [docs/evaluation-prompts.md](src/docs/evaluation-prompts.md).
 
 ---
-# Run app in python for development & testing
+# HOW TO RUN THE APP IN PYTHON FOR DEVELOPMENT & TESTING 
 
 ## Run Everything Locally (Python venv — no Docker)
 
 This section covers running the server, tests, traces, and evaluations entirely from a local Python virtual environment. Use this when you want to develop, debug, or demo without Docker.
+
+**Avoid port binding conflicts: Make sure that you don't have docker running containers before you deploy the app using python**
 
 ### 1. Create and activate the virtual environment
 
