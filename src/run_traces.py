@@ -1,13 +1,12 @@
 """TravelShaper — Phoenix trace generator.
 
 Fires 11 queries against the running server and generates traces
-viewable in Phoenix at http://localhost:6006. Run this from the
-src/ directory after starting the Docker Compose stack.
+viewable in Phoenix at http://localhost:6006. Saves all query
+inputs and responses to a timestamped JSON file locally.
 
-The script runs on your local machine (not inside Docker). It
-sends HTTP requests to the server at localhost:8000, which is the
-Docker container exposed on that port. All traces are recorded by
-Phoenix automatically — open http://localhost:6006 to view them.
+Run this from the src/ directory after starting the Docker
+Compose stack. The script runs on your local machine and sends
+HTTP requests to the server at localhost:8000.
 
 Uses only the requests library (already a project dependency) and
 the Python standard library. No Phoenix packages, no pandas, no
@@ -19,6 +18,7 @@ Usage:
     python run_traces.py http://localhost:8000   # explicit base URL
 """
 
+import json
 import sys
 import time
 from datetime import date, timedelta
@@ -262,9 +262,19 @@ QUERIES = [
 # ── Runner ───────────────────────────────────────────────────
 
 
-def fire(number: int, label: str, body: dict) -> None:
-    """Send a single query and print a preview of the response."""
+def fire(number: int, label: str, expected: str, body: dict) -> dict:
+    """Send a single query, print a preview, return the result."""
     print(f"┌─ Query {number} ─ {label}")
+
+    result = {
+        "query": number,
+        "label": label,
+        "expected_tools": expected,
+        "request": body,
+        "status": None,
+        "response": None,
+        "error": None,
+    }
 
     try:
         r = requests.post(
@@ -279,22 +289,30 @@ def fire(number: int, label: str, body: dict) -> None:
         preview = text[:120].replace("\n", " ")
         suffix = "..." if len(text) > 120 else ""
         print(f"│  ✓ {preview}{suffix}")
+        result["status"] = "ok"
+        result["response"] = text
     except requests.exceptions.ConnectionError:
         print("│  ✗ Connection refused — is the server running?")
+        result["status"] = "connection_error"
+        result["error"] = "Connection refused"
     except requests.exceptions.Timeout:
         print("│  ✗ Request timed out (120s)")
+        result["status"] = "timeout"
+        result["error"] = "Request timed out (120s)"
     except Exception as e:
         print(f"│  ✗ {e}")
+        result["status"] = "error"
+        result["error"] = str(e)
 
     print("└─────────────────────────────────────────────────────")
     print()
+    return result
 
 
 def main() -> None:
     print()
     print("  TravelShaper — Phoenix Trace Generator")
     print(f"  Target:  {BASE_URL}")
-    print(f"  Phoenix: {PHOENIX_URL}")
     print(f"  Queries: {len(QUERIES)}")
     print(f"  Dates generated relative to: {today.isoformat()}")
     print()
@@ -303,21 +321,34 @@ def main() -> None:
     print()
 
     # ── Fire all queries ──────────────────────────────────────
+    results = []
     for i, query in enumerate(QUERIES, start=1):
-        fire(i, query["label"], query["body"])
+        result = fire(i, query["label"], query["expected"], query["body"])
+        results.append(result)
         if i < len(QUERIES):
             time.sleep(PAUSE_SECONDS)
 
-    # ── Done ──────────────────────────────────────────────────
+    # ── Save results ──────────────────────────────────────────
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"trace-results_{timestamp}.json"
+
+    output = {
+        "generated": today.isoformat(),
+        "target": BASE_URL,
+        "total_queries": len(QUERIES),
+        "results": results,
+    }
+
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+
+    succeeded = sum(1 for r in results if r["status"] == "ok")
+    failed = len(results) - succeeded
+
     print()
-    print("  All 11 queries complete.")
-    print(f"  View traces → {PHOENIX_URL}")
-    print()
-    print("  To export traces to CSV, run inside the container:")
-    print("    docker compose exec travelshaper python -m scripts.export_spans")
-    print()
-    print("  To run evaluations:")
-    print("    docker compose exec travelshaper python -m evaluations.run_evals")
+    print(f"  All {len(QUERIES)} queries complete. {succeeded} succeeded, {failed} failed.")
+    print(f"  Results saved → {filename}")
+    print(f"  View traces  → {PHOENIX_URL}")
     print()
 
 
