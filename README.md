@@ -45,6 +45,7 @@ This is the fastest path. Docker handles Python versions, dependencies, and Phoe
 
 ```bash
 cd src
+chmod +x setup.sh
 ./setup.sh
 ```
 
