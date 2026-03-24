@@ -4,421 +4,307 @@
 
 Every recommendation includes a hyperlink and an explanation of *why* it was chosen. The agent runs two distinct voices depending on budget mode, and the entire request flow is instrumented with Arize Phoenix for observability.
 
+
 ---
 
-## Quick Start
+## Before You Begin
 
-The fastest path from clone to working app. These three steps work identically on Windows, macOS, and Linux — Docker handles all platform differences.
+TravelShaper needs two API keys: an OpenAI key (powers the agent and validation classifiers) and a SerpAPI key (powers flight, hotel, and cultural guide searches). Everything else lives inside the project.
 
-**Step 1. Set up your environment.** Navigate into the `src/` directory and create your `.env` file with API keys (see "Before You Begin" below for details on obtaining keys):
+**Where to get keys:**
+
+- **OpenAI** (required) — [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+- **SerpAPI** (required for flights, hotels, cultural guide) — [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key). Free tier: 250 searches/month (~60–125 full briefings). Without this key, the agent falls back to DuckDuckGo for everything — functional, but limited.
+
+You will create a `.env` file with these keys during the launch steps below. The `.env` file is listed in `.gitignore` and will never be committed.
+
+---
+
+## Launching on macOS
+
+**Prerequisites:** Docker Desktop for Mac ([docs.docker.com/desktop/install/mac-install](https://docs.docker.com/desktop/install/mac-install/)) and Python 3.11+ (ships with macOS or install via [python.org](https://www.python.org/downloads/) or `brew install python`).
+
+Verify both are available:
+
+```
+docker compose version       # Docker Compose version 2+
+python3 --version            # Python 3.11+
+```
+
+### Start the app (Docker Compose)
+
+```
+cd src
+cp .env.example .env
+```
+
+Open `.env` in any editor (TextEdit, VS Code, `nano .env`) and add your OpenAI and SerpAPI keys. Then build and start the stack:
+
+```
+docker compose up -d --build
+```
+
+This builds the TravelShaper container with all dependencies and starts both the app and Phoenix. Takes 1–3 minutes on first build. When it finishes, verify with:
+
+```
+docker ps
+```
+
+You should see two containers running — one on port 8000 (TravelShaper) and one on port 6006 (Phoenix).
+
+### Set up Python for tests and traces
+
+Open a second terminal tab. Create a virtual environment inside `src/` — this keeps project dependencies isolated from your system Python and any other distributions like Anaconda:
+
+```
+cd src
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Your prompt should now show `(.venv)` at the beginning. Install dependencies:
+
+```
+pip install --upgrade pip
+pip install poetry==1.8.2
+poetry install -E dev
+pip install openai
+```
+
+The `-E dev` flag brings in `pytest` and `httpx` for testing. The `openai` package is required by `api.py` but is not in `pyproject.toml` (it is installed via pip in the Dockerfile for the Docker path).
+
+You only need to do this once. In future terminal sessions, just run `cd src && source .venv/bin/activate` to reactivate the venv.
+
+### Run tests
+
+```
+pytest tests/ -v
+```
+
+Expected output: **14 tests passing**. All tests are mocked — no API keys consumed, no server needed.
+
+### Generate traces
+
+```
+python run_traces.py
+```
+
+Fires 11 real queries against the running server and saves results to a timestamped JSON file. Traces are also recorded in Phoenix.
+
+---
+
+## Launching on Windows 10/11
+
+**Prerequisites:** Docker Desktop for Windows ([docs.docker.com/desktop/install/windows-install](https://docs.docker.com/desktop/install/windows-install/)) with WSL 2 backend enabled, and Python 3.11+ ([python.org/downloads](https://www.python.org/downloads/) — check "Add Python to PATH" during install).
+
+Open a terminal (Command Prompt, PowerShell, or Windows Terminal) and verify both are available:
+
+```
+docker compose version       # Docker Compose version 2+
+python --version             # Python 3.11+
+```
+
+Note: Windows uses `python` rather than `python3`. If `python` is not recognized, the Python installer's "Add to PATH" checkbox was not checked — reinstall or add it manually.
+
+### Start the app (Docker Compose)
 
 ```
 cd src
 copy .env.example .env
 ```
 
-On macOS or Linux, use `cp .env.example .env` instead of `copy`. Open `.env` in any editor and add your OpenAI and SerpAPI keys.
-
-**Step 2. Build and start the stack.** This builds the TravelShaper container, installs all dependencies inside it, and starts both the app and Phoenix:
+Open `.env` in any editor (Notepad, VS Code) and add your OpenAI and SerpAPI keys. Then build and start the stack:
 
 ```
 docker compose up -d --build
 ```
 
-When it finishes, the app is at [http://localhost:8000](http://localhost:8000) and Phoenix is at [http://localhost:6006](http://localhost:6006). Verify with `docker ps` — you should see two containers running.
-
-**Step 3. Run tests and generate traces.** In a separate terminal, set up a virtual environment and run the tests locally (see "Running Tests" below for full details on each platform):
+Takes 1–3 minutes on first build. When it finishes, verify with:
 
 ```
-cd src
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install poetry==1.8.2
-poetry install -E dev
-pip install openai
-pytest tests/ -v
-```
-
-All 14 tests are mocked and consume no API keys. To generate traces, run the trace script from the same venv:
-
-```
-python run_traces.py
-```
-
-This fires 11 real queries against the agent and saves the results to a timestamped JSON file. Open [http://localhost:6006](http://localhost:6006) to see the traces in Phoenix.
-
-For detailed setup options (including running without Docker), see the sections below.
-
----
-
-## Before You Begin
-
-TravelShaper needs two things from the outside world: an OpenAI key to think with, and a SerpAPI key to search with. Everything else — the agent, the tools, the UI, the tracing stack — lives inside the project. Getting these keys configured correctly is the single most important step in setup, and the one most likely to cause confusion later if skipped.
-
-### 1. Create your environment file
-
-```bash
-cd src
-cp .env.example .env
-```
-
-Open `.env` in any editor and fill in your keys:
-
-```
-OPENAI_API_KEY=sk-...
-SERPAPI_API_KEY=...
-PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces
-```
-
-**Where to get keys:**
-
-- **OpenAI** (required) — [platform.openai.com/api-keys](https://platform.openai.com/api-keys). The agent cannot function without this. The `openai` SDK is also used by the place and preference validation classifiers in `api.py`.
-- **SerpAPI** (required for flights, hotels, and cultural guide) — [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key). The free tier provides 250 searches per month, which supports roughly 60–125 full trip briefings. Without this key, the agent falls back to DuckDuckGo for everything — functional, but limited.
-- **Phoenix endpoint** — leave the default. It points to the Phoenix container that Docker Compose starts automatically. Only change this if you are running Phoenix on a different host.
-
-The `.env` file is listed in `.gitignore` and will never be committed. If you see an auth error later, this is the first place to check.
-
----
-
-## Choose How to Run
-
-There are three ways to run TravelShaper. All three produce identical results — the app, the API, and the tracing stack work the same regardless of how you start them. Pick the one that matches your comfort level and tooling.
-
-**Prerequisites for all options:**
-
-- **Docker** and **Docker Compose** — required for Options A and B, and recommended for Option C if you want Phoenix tracing. Install from [docs.docker.com/get-docker](https://docs.docker.com/get-docker/). After installing, verify both are available:
-
-```bash
-docker --version          # should print Docker version 20+
-docker compose version    # should print Docker Compose version 2+
-```
-
-If `docker compose` (with a space) does not work but `docker-compose` (with a hyphen) does, you have the legacy v1 CLI — that works too. Substitute `docker-compose` wherever you see `docker compose` below.
-
-- **Python 3.11+** — required for Option C only. Check with `python3 --version`.
-
-### Option A: Docker Compose (manual steps)
-
-Use this if you want full control over each step — building the containers yourself, starting the stack yourself, and seeing exactly what happens at each stage. Nothing runs until you tell it to.
-
-**Step 1.** Navigate into the `src/` directory. All commands assume you are inside `src/`, which is where the `Dockerfile`, `docker-compose.yml`, and application code live:
-
-```bash
-cd src
-```
-
-**Step 2.** Create your `.env` file if you have not already (see the "Before You Begin" section above):
-
-```bash
-cp .env.example .env
-# Open .env in your editor and add your OpenAI and SerpAPI keys
-```
-
-**Step 3.** Build the Docker images. The `--no-cache` flag is optional on the first build, but recommended after any code changes to ensure Docker does not serve stale cached layers:
-
-```bash
-docker compose build --no-cache
-```
-
-This will take 1–3 minutes. Docker installs Python, Poetry, all project dependencies, the Phoenix tracing packages, and the OpenAI SDK inside the container. You do not need any of these installed on your host machine.
-
-**Step 4.** Start both services in the background. The `-d` flag runs the containers detached so you get your terminal back:
-
-```bash
-docker compose up -d
-```
-
-**Step 5.** Check that both containers are running. `docker ps` lists all active containers on your machine — you should see two, one for TravelShaper and one for Phoenix:
-
-```bash
 docker ps
 ```
 
-Expected output (columns abbreviated):
+You should see two containers running — one on port 8000 (TravelShaper) and one on port 6006 (Phoenix).
 
-```
-CONTAINER ID   IMAGE                           STATUS                    PORTS
-a1b2c3d4e5f6   src-travelshaper                Up 30 seconds (healthy)   0.0.0.0:8000->8000/tcp
-f6e5d4c3b2a1   arizephoenix/phoenix:latest     Up 31 seconds             0.0.0.0:6006->6006/tcp
-```
+### Set up Python for tests and traces
 
-The key things to look for: both containers should show `Up` in the STATUS column, and the PORTS column should show `8000` and `6006` mapped. If a container shows `Restarting` or is missing entirely, check its logs (see Step 6).
-
-You can also use `docker compose ps` for a view scoped to just this project's services:
-
-```bash
-docker compose ps
-```
-
-**Step 6.** Check the logs if anything looks wrong. Each container writes its stdout and stderr to Docker's log system. To see the last 50 lines from the TravelShaper container:
-
-```bash
-docker compose logs --tail 50 travelshaper
-```
-
-To see Phoenix logs:
-
-```bash
-docker compose logs --tail 50 phoenix
-```
-
-To follow the logs in real time (useful while testing — press `Ctrl+C` to stop):
-
-```bash
-docker compose logs -f travelshaper
-```
-
-Common things you will see in the TravelShaper logs: `Uvicorn running on http://0.0.0.0:8000` means the server started successfully. An `OPENAI_API_KEY` or `SERPAPI_API_KEY` error means your `.env` file is missing or has invalid keys. An `AssertionError` at startup usually means a dependency conflict — rebuild with `docker compose build --no-cache`.
-
-**Step 7.** Verify the app is responding:
-
-```bash
-curl http://localhost:8000/health
-# Expected output: {"status":"ok"}
-```
-
-If you get a "connection refused" error, the container may still be starting. Wait 10–15 seconds and try again — the Dockerfile includes a health check that retries every 30 seconds automatically.
-
-When both services are up:
-
-| Service | URL |
-|---------|-----|
-| TravelShaper (app + API) | [http://localhost:8000](http://localhost:8000) |
-| Phoenix (tracing UI) | [http://localhost:6006](http://localhost:6006) |
-
-Open [http://localhost:8000](http://localhost:8000) in your browser to use the trip planning form, or use curl to hit the API directly.
-
-**Stopping the stack:**
-
-```bash
-docker compose down
-```
-
-**Rebuilding after code changes:**
-
-```bash
-docker compose down
-docker compose build --no-cache
-docker compose up -d
-```
-
-### Option B: Setup script (automated Docker path)
-
-Use this if you want the same Docker Compose result as Option A but prefer a single command that handles everything — prerequisite checks, API key configuration, building, and starting. This is the fastest path from clone to running app.
-
-**Step 1.** Navigate into the `src/` directory:
-
-```bash
-cd src
-```
-
-**Step 2.** Make the setup script executable. This is required the first time because Git does not always preserve file permissions:
-
-```bash
-chmod +x setup.sh
-```
-
-**Step 3.** Run the script:
-
-```bash
-./setup.sh
-```
-
-The script will walk you through each step interactively. Specifically, it will check that Docker and Docker Compose are installed (it detects both `docker compose` v2 and legacy `docker-compose` automatically), prompt you for your OpenAI and SerpAPI keys if no `.env` file exists yet, build the containers with `--no-cache`, start both services, and wait for the health check to pass before printing a summary.
-
-When it finishes:
-
-| Service | URL |
-|---------|-----|
-| TravelShaper (app + API) | [http://localhost:8000](http://localhost:8000) |
-| Phoenix (tracing UI) | [http://localhost:6006](http://localhost:6006) |
-
-You can verify both containers are running at any time with:
-
-```bash
-docker ps
-```
-
-You should see two containers — one for TravelShaper (port 8000) and one for Phoenix (port 6006), both with `Up` status. To check logs if something went wrong during setup:
-
-```bash
-docker compose logs --tail 50 travelshaper
-docker compose logs --tail 50 phoenix
-```
-
-**Stopping the stack** works the same as Option A:
-
-```bash
-docker compose down
-```
-
-### Option C: Local virtual environment
-
-Use this if you prefer working outside Docker, want hot-reload during development, or need to debug with local tools. This path requires Python 3.11+ installed on your machine. A virtual environment is required — do not install into your system Python.
-
-**Step 1.** Navigate into the `src/` directory:
-
-```bash
-cd src
-```
-
-**Step 2.** Create your `.env` file if you have not already:
-
-```bash
-cp .env.example .env
-# Open .env in your editor and add your OpenAI and SerpAPI keys
-```
-
-**Step 3.** Create and activate a virtual environment. This isolates all project dependencies from your system Python:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate       # macOS / Linux
-# .venv\Scripts\activate        # Windows
-```
-
-Your terminal prompt should now show `(.venv)` at the beginning. All subsequent commands assume the venv is active. If you open a new terminal window, you will need to run `source .venv/bin/activate` again.
-
-**Step 4.** Install pip and Poetry inside the venv:
-
-```bash
-pip install --upgrade pip
-pip install poetry==1.8.2
-```
-
-**Step 5.** Install project dependencies using Poetry:
-
-```bash
-poetry install -E dev
-```
-
-The `-E dev` flag includes test dependencies (pytest, httpx). This step takes 1–2 minutes on a fresh install.
-
-**Step 6.** Install the OpenAI SDK. This is required but is not declared in `pyproject.toml` (it is installed via pip in the Dockerfile for the Docker paths). Without it, the server will crash on startup with `ModuleNotFoundError: No module named 'openai'`, because `api.py` imports it for the place and preference validation classifiers:
-
-```bash
-pip install openai
-```
-
-**Step 7.** Start the server. The `--reload` flag watches for file changes and restarts automatically, which is useful during development:
-
-```bash
-uvicorn api:app --host 0.0.0.0 --port 8000 --reload
-```
-
-The app is now running at [http://localhost:8000](http://localhost:8000). Verify with:
-
-```bash
-curl http://localhost:8000/health
-# Expected output: {"status":"ok"}
-```
-
-**Step 8 (optional). Enable Phoenix tracing.** The Phoenix packages have Python version constraints that conflict with Poetry's resolver on Python 3.11/3.12, so they must be installed directly with pip rather than through Poetry:
-
-```bash
-pip install arize-phoenix arize-phoenix-evals arize-phoenix-otel \
-            openinference-instrumentation-langchain
-```
-
-You will also need to run the Phoenix server itself. The simplest way is Docker (even if you are running the app locally, Phoenix can still run in a container):
-
-```bash
-docker run -d -p 6006:6006 arizephoenix/phoenix:latest
-```
-
-The `-d` flag runs Phoenix detached. Traces will appear at [http://localhost:6006](http://localhost:6006) once you send a query to the app. If you skip this step, the app still works — it just silently skips tracing because the Phoenix instrumentation in `agent.py` is wrapped in a `try/except ImportError` block.
-
----
-
-## Running Tests
-
-All 14 tests are entirely self-contained. Every external call — OpenAI, SerpAPI, DuckDuckGo — is mocked with `unittest.mock.patch`. The tests do not need API keys, a running server, a network connection, or Docker. They need only the right Python packages available to import, which means they run fastest and most naturally from a local virtual environment.
-
-### Setting up the virtual environment
-
-If you already have a working venv from the "Option C: Local virtual environment" setup section above, you can skip straight to "Running the tests" below. If you have been using Docker exclusively and don't have a venv yet, follow these steps to create one. You only need to do this once.
-
-The virtual environment lives inside the `src/` directory at `src/.venv/`. This location matters because all the project imports (like `from tools.flights import search_flights`) assume `src/` is the Python root. The `.venv/` directory is listed in `.gitignore` and will not be committed.
-
-**Step 1.** Navigate into the `src/` directory. All subsequent commands assume you are here:
+Open a second terminal window. Create a virtual environment inside `src/`:
 
 ```
 cd src
-```
-
-**Step 2.** Create the virtual environment. This produces a `.venv/` directory containing an isolated copy of Python and pip, separate from your system Python and any other Python distributions (like Anaconda) on your machine:
-
-On macOS or Linux:
-
-```
-python3 -m venv .venv
-```
-
-On Windows:
-
-```
 python -m venv .venv
 ```
 
-The difference is the command name: macOS and Linux typically install Python 3 as `python3`, while the Windows Python installer registers it as `python`. If `python3` does not work on your machine, try `python --version` to confirm it reports 3.11 or higher, then use `python` everywhere below where you see `python3`.
+Activate it. The command differs depending on your terminal:
 
-**Step 3.** Activate the virtual environment. This changes your shell so that `python` and `pip` point to the copies inside `.venv/` rather than your system Python:
-
-On macOS or Linux (bash, zsh):
-
-```
-source .venv/bin/activate
-```
-
-On Windows (Command Prompt):
+In Command Prompt:
 
 ```
 .venv\Scripts\activate.bat
 ```
 
-On Windows (PowerShell):
+In PowerShell:
 
 ```
 .venv\Scripts\Activate.ps1
 ```
 
-Your terminal prompt should now show `(.venv)` at the beginning of the line. This tells you the venv is active. If you open a new terminal window or tab, you will need to activate it again — the activation only applies to the current shell session.
+If PowerShell blocks the activation script with a security error, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` first, then try again.
 
-**Step 4.** Install pip and Poetry inside the venv:
+Your prompt should now show `(.venv)` at the beginning. Install dependencies:
 
 ```
 pip install --upgrade pip
 pip install poetry==1.8.2
-```
-
-**Step 5.** Install project dependencies. The `-E dev` flag tells Poetry to include the `dev` extras group, which brings in `pytest` and `httpx` (the async HTTP client that FastAPI's test client uses). Without this flag, you will have the project code but not the tools needed to test it:
-
-```
 poetry install -E dev
-```
-
-**Step 6.** Install the OpenAI SDK. This is required because `api.py` imports it for the place and preference validation classifiers. It is not declared in `pyproject.toml` (it is installed via pip in the Dockerfile for the Docker path), so you must install it separately:
-
-```
 pip install openai
 ```
 
-The venv is now ready. You do not need to repeat these steps unless you delete the `.venv/` directory or want to start fresh.
+You only need to do this once. In future terminal sessions, just `cd src` and reactivate the venv.
 
-### Running the tests
-
-Make sure you are in the `src/` directory and the venv is active (you should see `(.venv)` in your prompt). Then run:
+### Run tests
 
 ```
 pytest tests/ -v
 ```
 
-The `-v` flag enables verbose output, which prints each test name and its pass/fail status on a separate line. Expected output: **14 tests passing** across three test files (`test_tools.py`, `test_agent.py`, `test_api.py`).
+Expected output: **14 tests passing**. All tests are mocked — no API keys consumed, no server needed.
 
-This command is identical on macOS, Linux, and Windows — once the venv is active, `pytest` resolves the same way on all platforms.
+### Generate traces
 
-If you see `ModuleNotFoundError` when running tests, it almost always means one of two things: either the venv is not activated (check for `(.venv)` in your prompt), or the `-E dev` flag was omitted during `poetry install` (run `poetry install -E dev` to fix it). If the missing module is `openai`, run `pip install openai`. The `pyproject.toml` file includes `[tool.pytest.ini_options]` with `pythonpath = ["."]`, which tells pytest to add the current directory to the Python path — this is why tests must be run from inside `src/`.
+```
+python run_traces.py
+```
+
+Fires 11 real queries against the running server and saves results to a timestamped JSON file. Traces are also recorded in Phoenix.
+
+---
+
+## Launching on Linux (Desktop)
+
+**Prerequisites:** Docker Engine and Docker Compose plugin ([docs.docker.com/engine/install](https://docs.docker.com/engine/install/)) and Python 3.11+ (most distributions ship with it; check with `python3 --version`). On Ubuntu/Debian, if Python is missing: `sudo apt install python3 python3-venv python3-pip`.
+
+Verify both are available:
+
+```
+docker compose version       # Docker Compose version 2+
+python3 --version            # Python 3.11+
+```
+
+If `docker compose` (with a space) does not work but `docker-compose` (hyphenated) does, you have the legacy v1 CLI — substitute `docker-compose` wherever you see `docker compose` below.
+
+### Start the app (Docker Compose)
+
+```
+cd src
+cp .env.example .env
+```
+
+Open `.env` in any editor (`nano .env`, `vim .env`, or your GUI editor) and add your OpenAI and SerpAPI keys. Then build and start the stack:
+
+```
+docker compose up -d --build
+```
+
+Takes 1–3 minutes on first build. When it finishes, verify with:
+
+```
+docker ps
+```
+
+You should see two containers running — one on port 8000 (TravelShaper) and one on port 6006 (Phoenix).
+
+If your user is not in the `docker` group and you get a permission error, either prefix with `sudo` or add yourself to the group: `sudo usermod -aG docker $USER` (requires logout/login to take effect).
+
+### Set up Python for tests and traces
+
+Open a second terminal. Create a virtual environment inside `src/`:
+
+```
+cd src
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Your prompt should now show `(.venv)` at the beginning. Install dependencies:
+
+```
+pip install --upgrade pip
+pip install poetry==1.8.2
+poetry install -E dev
+pip install openai
+```
+
+You only need to do this once. In future terminal sessions, just run `cd src && source .venv/bin/activate` to reactivate the venv.
+
+### Run tests
+
+```
+pytest tests/ -v
+```
+
+Expected output: **14 tests passing**. All tests are mocked — no API keys consumed, no server needed.
+
+### Generate traces
+
+```
+python run_traces.py
+```
+
+Fires 11 real queries against the running server and saves results to a timestamped JSON file. Traces are also recorded in Phoenix.
+
+---
+
+## Quick Reference
+
+Once the Docker stack is running and your venv is set up, these are the things you will do most often.
+
+### Test the API with a single curl request
+
+```
+curl -s -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "I am planning a trip departing from San Francisco, CA (please identify the nearest major international airport). Destination: Tokyo, Japan. Departure: 2026-06-15. Return: 2026-06-29 (2 weeks). Budget preference: save money. Interests: food and dining, photography. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
+    "departure": "San Francisco, CA",
+    "destination": "Tokyo, Japan"
+  }' | python3 -m json.tool
+```
+
+On Windows, replace `python3` with `python` and use double quotes for the outer shell quoting (or run the command inside WSL or Git Bash). The response is a JSON object with a `response` field containing the full travel briefing in markdown.
+
+To verify the server is alive without triggering a full agent run:
+
+```
+curl http://localhost:8000/health
+```
+
+Expected output: `{"status":"ok"}`
+
+### Access the browser UI
+
+Open [http://localhost:8000](http://localhost:8000) in any browser. The form collects departure, destination, dates, budget mode, interests, and optional preferences. Click "Plan my trip →" to get a full briefing streamed in real time. No login, no setup — the browser talks directly to the same API that curl uses.
+
+### Access Phoenix (tracing UI)
+
+Open [http://localhost:6006](http://localhost:6006) in any browser. Every request to `/chat` or `/chat/stream` generates a trace. Click into any trace to see the full tool call chain — which tools were called, what arguments were passed, how long each step took, and the agent's final response. Phoenix runs as a separate container started by Docker Compose and requires no additional setup.
+
+### Query trace information from the terminal
+
+Phoenix exposes a REST API at `localhost:6006`. To fetch recent spans:
+
+```
+curl -s http://localhost:6006/v1/spans?limit=10 | python3 -m json.tool
+```
+
+To fetch traces:
+
+```
+curl -s http://localhost:6006/v1/traces?limit=5 | python3 -m json.tool
+```
+
+If you prefer to work with trace data offline, `run_traces.py` saves every query's input and response to a timestamped JSON file (e.g. `trace-results_2026-03-23_14-05-32.json`) in the `src/` directory. This file contains the request body, expected tools, response text, and status for each of the 11 queries.
 
 ---
 
@@ -890,7 +776,7 @@ The browser UI uses `localStorage` for trip history, which is accessible to any 
 
 ### Checking Docker status
 
-If you are running TravelShaper via Docker (Options A or B), these commands help you understand what is happening inside the containers. Run all of them from the `src/` directory.
+If you are running TravelShaper via Docker Compose, these commands help you understand what is happening inside the containers. Run all of them from the `src/` directory.
 
 **See which containers are running:**
 
@@ -950,7 +836,7 @@ docker compose up -d
 
 **Missing traces in Phoenix** — confirm Phoenix is running. If using Docker Compose, both services start together. If using a venv, you need to start Phoenix separately. Run at least one `/chat` query, then refresh the Phoenix UI at [http://localhost:6006](http://localhost:6006).
 
-**`ModuleNotFoundError: No module named 'phoenix'`** — the Phoenix packages are not installed. In venv mode, install them with pip (see the venv setup section above). In Docker mode, they are pre-installed in the container.
+**`ModuleNotFoundError: No module named 'phoenix'`** — the Phoenix packages are not installed locally. They are pre-installed in the Docker container. If you need them locally, install with pip: `pip install arize-phoenix arize-phoenix-evals arize-phoenix-otel openinference-instrumentation-langchain`.
 
 **`run_traces.py` fails with `ConnectionError`** — the TravelShaper server is not running. Start the Docker stack with `docker compose up -d` and wait for the health check to pass (`curl http://localhost:8000/health`), then run the script again.
 
