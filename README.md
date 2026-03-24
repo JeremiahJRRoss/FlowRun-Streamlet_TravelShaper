@@ -93,6 +93,69 @@ To stop the stack: `docker compose down`. To rebuild after code changes: `docker
 
 ---
 
+## Quick Reference
+
+Once the Docker stack is running and your venv is set up, these are the things you will do most often.
+
+### Test the API with a single curl request
+
+```
+curl -s -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "I am planning a trip departing from San Francisco, CA (please identify the nearest major international airport). Destination: Tokyo, Japan. Departure: 2026-06-15. Return: 2026-06-29 (2 weeks). Budget preference: save money. Interests: food and dining, photography. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
+    "departure": "San Francisco, CA",
+    "destination": "Tokyo, Japan"
+  }' | python3 -m json.tool
+```
+
+On Windows, replace `python3` with `python` and use double quotes for the outer shell quoting (or run the command inside WSL or Git Bash). The response is a JSON object with a `response` field containing the full travel briefing in markdown.
+
+To verify the server is alive without triggering a full agent run:
+
+```
+curl http://localhost:8000/health
+```
+
+Expected output: `{"status":"ok"}`
+
+### Access the browser UI
+
+Open [http://localhost:8000](http://localhost:8000) in any browser. The form collects departure, destination, dates, budget mode, interests, and optional preferences. Click "Plan my trip →" to get a full briefing streamed in real time. No login, no setup — the browser talks directly to the same API that curl uses.
+
+### Access Phoenix (tracing UI)
+
+Open [http://localhost:6006](http://localhost:6006) in any browser. Every request to `/chat` or `/chat/stream` generates a trace. Click into any trace to see the full tool call chain — which tools were called, what arguments were passed, how long each step took, and the agent's final response. Phoenix runs as a separate container started by Docker Compose and requires no additional setup.
+
+### Query trace information from the terminal
+
+Phoenix exposes a REST API at `localhost:6006`. To fetch recent spans:
+
+```
+curl -s http://localhost:6006/v1/spans?limit=10 | python3 -m json.tool
+```
+
+To fetch traces:
+
+```
+curl -s http://localhost:6006/v1/traces?limit=5 | python3 -m json.tool
+```
+
+If you prefer to work with trace data offline, `run_traces.py` saves every query's input and response to a timestamped JSON file in the `src/` directory.
+
+### Generate traces and run evaluations
+
+From the `src/` directory with the venv active:
+
+```
+python run_traces.py
+python run_evals.py
+```
+
+The first script fires 11 queries against the server and records traces in Phoenix. The second scores those traces with three LLM-as-judge metrics (frustration, tool correctness, completeness) and writes the results back to Phoenix. For a quick smoke test, `python run_traces.py 3` fires only the first 3 queries, and `python run_evals.py 5` evaluates only the 5 most recent traces.
+
+---
+
 ## Set Up Python for Traces and Evaluations
 
 Traces and evaluations both run on your local machine, outside Docker. They use a Python virtual environment inside `src/`. You only need to set this up once.
@@ -226,68 +289,6 @@ Then open [http://localhost:6006](http://localhost:6006) and click the **Evaluat
 
 For the full evaluation prompt text and design rationale, see [docs/evaluation-prompts.md](src/docs/evaluation-prompts.md).
 
----
-
-## Quick Reference
-
-Once the Docker stack is running and your venv is set up, these are the things you will do most often.
-
-### Test the API with a single curl request
-
-```
-curl -s -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "I am planning a trip departing from San Francisco, CA (please identify the nearest major international airport). Destination: Tokyo, Japan. Departure: 2026-06-15. Return: 2026-06-29 (2 weeks). Budget preference: save money. Interests: food and dining, photography. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
-    "departure": "San Francisco, CA",
-    "destination": "Tokyo, Japan"
-  }' | python3 -m json.tool
-```
-
-On Windows, replace `python3` with `python` and use double quotes for the outer shell quoting (or run the command inside WSL or Git Bash). The response is a JSON object with a `response` field containing the full travel briefing in markdown.
-
-To verify the server is alive without triggering a full agent run:
-
-```
-curl http://localhost:8000/health
-```
-
-Expected output: `{"status":"ok"}`
-
-### Access the browser UI
-
-Open [http://localhost:8000](http://localhost:8000) in any browser. The form collects departure, destination, dates, budget mode, interests, and optional preferences. Click "Plan my trip →" to get a full briefing streamed in real time. No login, no setup — the browser talks directly to the same API that curl uses.
-
-### Access Phoenix (tracing UI)
-
-Open [http://localhost:6006](http://localhost:6006) in any browser. Every request to `/chat` or `/chat/stream` generates a trace. Click into any trace to see the full tool call chain — which tools were called, what arguments were passed, how long each step took, and the agent's final response. Phoenix runs as a separate container started by Docker Compose and requires no additional setup.
-
-### Query trace information from the terminal
-
-Phoenix exposes a REST API at `localhost:6006`. To fetch recent spans:
-
-```
-curl -s http://localhost:6006/v1/spans?limit=10 | python3 -m json.tool
-```
-
-To fetch traces:
-
-```
-curl -s http://localhost:6006/v1/traces?limit=5 | python3 -m json.tool
-```
-
-If you prefer to work with trace data offline, `run_traces.py` saves every query's input and response to a timestamped JSON file in the `src/` directory.
-
-### Generate traces and run evaluations
-
-From the `src/` directory with the venv active:
-
-```
-python run_traces.py
-python run_evals.py
-```
-
-The first script fires 11 queries against the server and records traces in Phoenix. The second scores those traces with three LLM-as-judge metrics (frustration, tool correctness, completeness) and writes the results back to Phoenix. For a quick smoke test, `python run_traces.py 3` fires only the first 3 queries, and `python run_evals.py 5` evaluates only the 5 most recent traces.
 
 ---
 
