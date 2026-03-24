@@ -157,24 +157,6 @@ On macOS or Linux: `cd src && source .venv/bin/activate`
 
 On Windows: `cd src` then `.venv\Scripts\activate.bat` or `.venv\Scripts\Activate.ps1`
 
----
-
-## Run Tests
-
-Make sure you are in the `src/` directory with the venv active (`(.venv)` in your prompt). Tests require the full project dependencies (Poetry + openai). If you set up the venv using the lightweight install above, you will also need:
-
-```
-pip install poetry==1.8.2
-poetry install -E dev
-```
-
-Then:
-
-```
-pytest tests/ -v
-```
-
-Expected output: **14 tests passing** across three test files (`test_tools.py`, `test_agent.py`, `test_api.py`). All tests are mocked — no API keys consumed, no running server needed. This command is identical on macOS, Linux, and Windows once the venv is active.
 
 ---
 
