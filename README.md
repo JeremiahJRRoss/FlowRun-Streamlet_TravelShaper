@@ -39,10 +39,39 @@ The `.env` file is listed in `.gitignore` and will never be committed. If you se
 
 There are two ways to run TravelShaper. Pick the one that fits your situation — they produce identical results.
 
-### Option A: Docker Compose (recommended)
+### Option A: Docker Compose 
 
 This is the fastest path. Docker handles Python versions, dependencies, and Phoenix in one command. You do not need a virtual environment.
 
+Use the following steps  (Docker caches aggressively — this ensures fresh containers), to build and spin up your docker containers. 
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+verify that containers are working using docker ps 
+
+```bash
+docker ps
+```
+The following services are now available
+
+| Service | URL |
+|---------|-----|
+| TravelShaper (app + API) | [http://localhost:8000](http://localhost:8000) |
+| Phoenix (tracing UI) | [http://localhost:6006](http://localhost:6006) |
+
+To stop everything:
+
+```bash
+docker compose down
+# or, if using legacy Docker Compose:
+docker-compose down
+```
+### Option B: Docker Compose and testing using a bash script (recommended)
+
+A bash script has been provided to automate the spinup and testing processes. 
 ```bash
 cd src
 chmod +x setup.sh
@@ -64,14 +93,9 @@ docker compose down
 docker-compose down
 ```
 
-To rebuild after code changes (Docker caches aggressively — this ensures fresh containers):
 
-```bash
-docker compose build --no-cache
-docker compose up -d
-```
 
-### Option B: Local virtual environment
+### Option C:  Local virtual environment
 
 Use this if you prefer working outside Docker, want hot-reload during development, or need to debug with local tools. A virtual environment is required — do not install into your system Python.
 
