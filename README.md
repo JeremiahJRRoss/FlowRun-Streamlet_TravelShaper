@@ -60,8 +60,8 @@ If `docker compose` (with a space) does not work but `docker-compose` (hyphenate
 On Linux, if you get a permission error from Docker, either prefix commands with `sudo` or add yourself to the docker group: `sudo usermod -aG docker $USER` (requires logout/login to take effect).
 
 ---
-
-## Start the App
+# DEMO WITH DOCKER 
+##  Start the App
 
 All commands in this section are run from inside the `src/` directory.
 
@@ -296,6 +296,210 @@ Then open [http://localhost:6006](http://localhost:6006) and click the **Evaluat
 **Answer Completeness** checks whether the response covers everything the user asked for, with scope awareness. A flights-only response is complete for a flights-only request. A full-trip query that's missing hotel recommendations is incomplete. The evaluator first determines what the user actually asked for, then checks each element.
 
 For the full evaluation prompt text and design rationale, see [docs/evaluation-prompts.md](src/docs/evaluation-prompts.md).
+
+---
+# Run app in python for development & testing
+
+## Run Everything Locally (Python venv — no Docker)
+
+This section covers running the server, tests, traces, and evaluations entirely from a local Python virtual environment. Use this when you want to develop, debug, or demo without Docker.
+
+### 1. Create and activate the virtual environment
+
+All commands assume you are inside the `src/` directory.
+
+**macOS / Linux:**
+
+```bash
+cd src
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+**Windows (Command Prompt):**
+
+```bash
+cd src
+python -m venv .venv
+.venv\Scripts\activate.bat
+```
+
+**Windows (PowerShell):**
+
+```bash
+cd src
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+Your prompt should now show `(.venv)`. Every command below assumes the venv is active.
+
+### 2. Install all dependencies
+
+```bash
+# Install pip and Poetry inside the venv
+pip install --upgrade pip
+pip install poetry==1.8.2
+
+# Install core dependencies + test runner (pytest, httpx)
+poetry install --no-interaction --no-ansi --no-root -E dev
+
+# Install packages that Poetry can't resolve (Phoenix version constraints)
+# plus the OpenAI SDK used by the validation classifiers
+pip install arize-phoenix arize-phoenix-evals arize-phoenix-otel \
+            openinference-instrumentation-langchain openai pandas requests
+```
+
+After this completes you have everything needed to run the server, tests, traces, and evaluations from the same environment.
+
+### 3. Configure environment variables
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and add your keys:
+
+```
+OPENAI_API_KEY=sk-...
+SERPAPI_API_KEY=...
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces
+```
+
+Tests do **not** need API keys — all external calls are mocked. The keys are only required for running the live server, traces, and evaluations.
+
+### 4. Run all 14 tests
+
+```bash
+pytest tests/ -v
+```
+
+Expected output:
+
+```
+tests/test_tools.py::test_search_flights_formats_results          PASSED
+tests/test_tools.py::test_search_flights_handles_empty_results    PASSED
+tests/test_tools.py::test_search_hotels_formats_results           PASSED
+tests/test_tools.py::test_cultural_guide_returns_guidance         PASSED
+tests/test_agent.py::test_agent_graph_has_expected_nodes          PASSED
+tests/test_agent.py::test_agent_tools_registered                  PASSED
+tests/test_api.py::test_health_endpoint                           PASSED
+tests/test_api.py::test_chat_endpoint_accepts_message             PASSED
+tests/test_api.py::test_chat_accepts_valid_preferences            PASSED
+tests/test_api.py::test_chat_rejects_invalid_preferences          PASSED
+tests/test_api.py::test_chat_skips_validation_for_empty_preferences PASSED
+tests/test_api.py::test_chat_accepts_valid_places                 PASSED
+tests/test_api.py::test_chat_rejects_invalid_place                PASSED
+tests/test_api.py::test_chat_auto_corrects_misspelled_place       PASSED
+
+14 passed
+```
+
+You can also run individual test files or single tests:
+
+```bash
+pytest tests/test_tools.py -v          # 4 tool tests
+pytest tests/test_agent.py -v          # 2 agent graph tests
+pytest tests/test_api.py -v            # 8 API + validation tests
+pytest tests/test_api.py::test_chat_rejects_invalid_place -v   # single test
+```
+
+A deprecation warning about `temperature` in `model_kwargs` is expected and harmless.
+
+### 5. Start Phoenix (tracing UI)
+
+Phoenix needs to be running before you start the server if you want traces. You have two options:
+
+**Option A — Docker (recommended, keeps Phoenix isolated):**
+
+```bash
+docker run -d -p 6006:6006 --name phoenix arizephoenix/phoenix:latest
+```
+
+**Option B — Python (runs in a separate terminal):**
+
+```bash
+# In a second terminal, with the venv active:
+cd src
+source .venv/bin/activate
+phoenix serve
+```
+
+Phoenix UI is at [http://localhost:6006](http://localhost:6006) either way.
+
+### 6. Start the TravelShaper server
+
+```bash
+uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The `--reload` flag watches for file changes and restarts automatically — useful during development. The browser UI is at [http://localhost:8000](http://localhost:8000) and the API is available for curl.
+
+Verify it's running:
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok"}
+```
+
+### 7. Generate traces
+
+With both the server and Phoenix running:
+
+```bash
+python run_traces.py              # all 11 queries
+python run_traces.py 3            # first 3 only (quick test)
+```
+
+Traces appear at [http://localhost:6006](http://localhost:6006) within seconds.
+
+### 8. Run evaluations
+
+After traces exist in Phoenix:
+
+```bash
+python run_evals.py               # evaluate 11 most recent traces
+python run_evals.py 5             # evaluate 5 most recent
+python run_evals.py all           # evaluate everything
+```
+
+Results are written back to Phoenix and saved to a local JSON file.
+
+### Quick reference — the full session
+
+Open a terminal and run the complete sequence:
+
+```bash
+cd src
+source .venv/bin/activate          # activate venv (macOS/Linux)
+
+pytest tests/ -v                   # run all 14 tests (no API keys needed)
+
+uvicorn api:app --port 8000 &     # start server in background
+sleep 2                            # wait for startup
+
+python run_traces.py 3             # generate 3 traces (quick smoke test)
+python run_evals.py 3              # evaluate those 3 traces
+
+# Open http://localhost:8000 for the browser UI
+# Open http://localhost:6006 for Phoenix traces + evaluations
+```
+
+### Deactivating
+
+When you're done:
+
+```bash
+deactivate                         # exit the venv
+```
+
+The next time you return, just activate and go — no reinstall needed:
+
+```bash
+cd src
+source .venv/bin/activate          # macOS/Linux
+pytest tests/ -v                   # confirm everything still works
+```
 
 
 ---
