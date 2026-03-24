@@ -50,7 +50,7 @@ docker compose version    # should print Docker Compose version 2+
 
 If `docker compose` (with a space) does not work but `docker-compose` (with a hyphen) does, you have the legacy v1 CLI — that works too. Substitute `docker-compose` wherever you see `docker compose` below.
 
-- **Python 3.11+** — required for Option C only. Check with `python3 --version`.
+- **Python 3.11+** 
 
 ### Option A: Docker Compose (manual steps)
 
