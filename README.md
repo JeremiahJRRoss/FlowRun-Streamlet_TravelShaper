@@ -92,10 +92,9 @@ When the stack is running:
 To stop the stack: `docker compose down`. To rebuild after code changes: `docker compose down && docker compose up -d --build`.
 
 ---
-## Set Up Python for Traces
+## Set Up a Python environment for generating traces
 
-The trace script runs on your local machine and only needs the `requests` library — no project modules, no Phoenix packages, no Poetry. You only need to set this up once.
-
+The trace script runs on your local machine and only needs the `requests` library — .
 **Step 1.** Open a second terminal and navigate to `src/`:
 ```
 cd src
