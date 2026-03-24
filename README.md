@@ -92,69 +92,54 @@ When the stack is running:
 To stop the stack: `docker compose down`. To rebuild after code changes: `docker compose down && docker compose up -d --build`.
 
 ---
+## Set Up Python for Traces
 
-## Set Up Python for Tests and Traces
-
-Tests and traces both run on your local machine, outside Docker. They use a Python virtual environment inside `src/`. You only need to set this up once.
+The trace script runs on your local machine and only needs the `requests` library — no project modules, no Phoenix packages, no Poetry. You only need to set this up once.
 
 **Step 1.** Open a second terminal and navigate to `src/`:
-
 ```
 cd src
 ```
 
-**Step 2.** Create the virtual environment:
+**Step 2.** Create a virtual environment:
 
 On macOS or Linux:
-
 ```
 python3 -m venv .venv
 ```
 
 On Windows:
-
 ```
 python -m venv .venv
 ```
 
-This creates a `.venv/` directory inside `src/` that isolates all project dependencies from your system Python (and from other distributions like Anaconda). The `.venv/` directory is listed in `.gitignore` and will not be committed.
+This creates a `.venv/` directory inside `src/` that isolates dependencies from your system Python (and from other distributions like Anaconda). The `.venv/` directory is listed in `.gitignore` and will not be committed.
 
 **Step 3.** Activate the virtual environment:
 
 On macOS or Linux:
-
 ```
 source .venv/bin/activate
 ```
 
 On Windows (Command Prompt):
-
 ```
 .venv\Scripts\activate.bat
 ```
 
 On Windows (PowerShell):
-
 ```
 .venv\Scripts\Activate.ps1
 ```
 
 If PowerShell blocks the script with a security error, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` first, then try again.
 
-Your terminal prompt should now show `(.venv)` at the beginning. This tells you the venv is active. If you open a new terminal, you will need to activate it again — the activation only applies to the current shell session.
+Your terminal prompt should now show `(.venv)` at the beginning. If you open a new terminal, you will need to activate it again — the activation only applies to the current shell session.
 
-**Step 4.** Install dependencies for tests:
-
+**Step 4.** Install the single dependency:
 ```
-pip install --upgrade pip
-pip install poetry==1.8.2
-poetry install -E dev
-pip install openai
+pip install requests
 ```
-
-The `-E dev` flag brings in `pytest` and `httpx` (the async HTTP client that FastAPI's test client uses). The `openai` package is required because `api.py` imports it at the module level for validation classifiers — without it, the import fails before any mocks can take effect. It is not declared in `pyproject.toml` (it is installed via pip in the Dockerfile for the Docker path), so you must install it separately.
-
-**Step 5.** The trace script (`run_traces.py`) only needs the `requests` library, which was already installed by `poetry install` in the previous step. If you ever want to run traces without the full test dependencies, `pip install requests` is all that is required.
 
 In future terminal sessions, just activate the venv — you do not need to reinstall anything:
 
@@ -164,22 +149,9 @@ On Windows: `cd src` then `.venv\Scripts\activate.bat` or `.venv\Scripts\Activat
 
 ---
 
-## Run Tests
-
-Make sure you are in the `src/` directory with the venv active (`(.venv)` in your prompt). Then:
-
-```
-pytest tests/ -v
-```
-
-Expected output: **14 tests passing** across three test files (`test_tools.py`, `test_agent.py`, `test_api.py`). All tests are mocked — no API keys consumed, no running server needed. This command is identical on macOS, Linux, and Windows once the venv is active.
-
----
-
 ## Generate Traces
 
 Make sure you are in the `src/` directory with the venv active, and the Docker stack is running. Then:
-
 ```
 python run_traces.py
 ```
