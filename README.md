@@ -439,17 +439,40 @@ curl http://localhost:8000/health
 
 ## Run Evaluations
 
-The evaluation pipeline runs three LLM-as-judge metrics against the collected traces:
+The evaluation pipeline scores collected traces using three LLM-as-judge metrics: User Frustration, Tool Usage Correctness, and Answer Completeness. Each metric sends the user's original message and the agent's full response to gpt-4o with a classification prompt, and gpt-4o returns a label (pass/fail) with an explanation. Results are written back to Phoenix as annotations on the original traces.
 
-User Frustration uses Phoenix's built-in `USER_FRUSTRATION_PROMPT_TEMPLATE` (the `frustration.py` file in `evaluations/metrics/` contains a custom reference prompt but it is not used in production). Tool Usage Correctness and Answer Completeness are custom LLM-as-judge prompts with scope awareness — the completeness metric distinguishes between intentionally scoped responses (user asked for flights only) and unintentionally incomplete ones (agent failed to search hotels).
+### How to run evaluations
 
+The evaluation script requires Phoenix packages (`arize-phoenix-evals`, `phoenix.evals`) that are installed inside the Docker container but not in your local Python environment. Because of this, evaluations run inside the TravelShaper container — not on your local machine.
+
+The container connects to the Phoenix container over Docker's internal network to pull traces, then calls the OpenAI API to score each one. Your `.env` file provides the OpenAI key that powers the scoring calls.
+
+Make sure the Docker stack is running and you have already generated traces (either through the browser UI, curl requests, or `run_traces.py`). Then:
 ```
-python -m evaluations.run_evals
+docker compose exec travelshaper python -m evaluations.run_evals
 ```
 
-Results are logged back to Phoenix and visible in the Evaluations tab. A `frustrated_interactions` dataset is automatically created from any traces flagged as frustrated.
+This pulls the most recent traces from Phoenix, scores each one against all three metrics, and writes the results back. The command takes 1–3 minutes depending on how many traces are stored — each trace requires three separate gpt-4o calls (one per metric).
 
-See [docs/trace-queries.md](src/docs/trace-queries.md) for the full query list and [docs/evaluation-prompts.md](src/docs/evaluation-prompts.md) for evaluation methodology.
+### Where to see results
+
+Open Phoenix at [http://localhost:6006](http://localhost:6006) and click the **Evaluations** tab. Each trace now shows its scores for all three metrics alongside the original tool call chain and agent response. You can filter by metric, sort by score, and click into any trace to read the classifier's explanation of why it passed or failed.
+
+Any traces flagged as frustrated are automatically collected into a `frustrated_interactions` dataset within Phoenix, which serves as a ready-made review queue.
+
+### What the three metrics measure
+
+**User Frustration** detects responses that are technically correct but experientially poor — curt, dismissive of the user's constraints, or structured in a way that forces extra work to extract the needed information. This metric uses Phoenix's built-in `USER_FRUSTRATION_PROMPT_TEMPLATE`. The file `evaluations/metrics/frustration.py` contains a custom reference prompt (`USER_FRUSTRATION_PROMPT_CUSTOM`) that was used during development but is not used in the production pipeline.
+
+**Tool Usage Correctness** evaluates whether the agent called the right tools for the request. A full-trip query should trigger flights, hotels, cultural guide, and web search. A "flights only" query should trigger only the flight tool. A user who says "I'm already there" should not trigger a flight search at all. The custom prompt in `evaluations/metrics/tool_correctness.py` understands these relationships and flags cases where the agent over-called or under-called its tools.
+
+**Answer Completeness** checks whether the response covers everything the user asked for, with scope awareness. If a user asked for flights, hotels, and dining recommendations, all three must appear in the response. If a user asked for flights only, a response containing only flights is complete — not incomplete. The custom prompt in `evaluations/metrics/answer_completeness.py` first determines what the user actually requested, then checks each element against the response.
+
+### Reading the results together
+
+A trace that passes tool correctness and completeness but fails frustration tells you the system is mechanically sound but tonally off — the system prompt needs voice work. A trace that fails tool correctness will almost always also fail completeness, because missing tools produce missing data. The tool flag identifies the root cause; the completeness flag shows the consequence the user would experience.
+
+For the full evaluation prompt text and the rationale behind each metric, see [docs/evaluation-prompts.md](src/docs/evaluation-prompts.md).
 
 ---
 
