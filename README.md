@@ -52,44 +52,27 @@ docker ps
 
 You should see two containers running — one on port 8000 (TravelShaper) and one on port 6006 (Phoenix).
 
-### Set up Python for tests and traces
 
-Open a second terminal tab. Create a virtual environment inside `src/` — this keeps project dependencies isolated from your system Python and any other distributions like Anaconda:
+### Set up Python for traces
 
+Open a second terminal. The trace script only needs the `requests` library — it does not use any of the project's own modules, Phoenix packages, or the OpenAI SDK. Create a virtual environment inside `src/` and install the single dependency:
 ```
 cd src
 python3 -m venv .venv
 source .venv/bin/activate
+pip install requests
 ```
 
-Your prompt should now show `(.venv)` at the beginning. Install dependencies:
+On Windows, use `python -m venv .venv` instead, and activate with `.venv\Scripts\activate.bat` (Command Prompt) or `.venv\Scripts\Activate.ps1` (PowerShell).
 
-```
-pip install --upgrade pip
-pip install poetry==1.8.2
-poetry install -E dev
-pip install openai
-```
-
-The `-E dev` flag brings in `pytest` and `httpx` for testing. The `openai` package is required by `api.py` but is not in `pyproject.toml` (it is installed via pip in the Dockerfile for the Docker path).
-
-You only need to do this once. In future terminal sessions, just run `cd src && source .venv/bin/activate` to reactivate the venv.
-
-### Run tests
-
-```
-pytest tests/ -v
-```
-
-Expected output: **14 tests passing**. All tests are mocked — no API keys consumed, no server needed.
+Your prompt should now show `(.venv)` at the beginning. You only need to do this once. In future terminal sessions, just run `cd src && source .venv/bin/activate` to reactivate the venv.
 
 ### Generate traces
-
 ```
 python run_traces.py
 ```
 
-Fires 11 real queries against the running server and saves results to a timestamped JSON file. Traces are also recorded in Phoenix.
+Fires 11 real queries against the running server and saves results to a timestamped JSON file (e.g. `trace-results_2026-03-23_14-05-32.json`). Traces are also recorded in Phoenix at [http://localhost:6006](http://localhost:6006).
 
 ---
 
