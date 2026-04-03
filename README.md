@@ -2,7 +2,7 @@
 
 **AI travel planning assistant** — fill in a form, get an opinionated briefing with flights, hotels, cultural prep, and activity picks.
 
-Every recommendation includes a hyperlink and an explanation of *why* it was chosen. The agent runs two distinct voices depending on budget mode, and the entire request flow is instrumented with Arize Phoenix for observability.
+Every recommendation includes a hyperlink and an explanation of *why* it was chosen. The agent runs two distinct voices depending on budget mode, and the entire request flow is instrumented with configurable OpenTelemetry tracing for observability.
 
 ---
 
@@ -96,15 +96,38 @@ cd src
 copy .env.example .env
 ```
 
-Open `.env` in any text editor and add your OpenAI and SerpAPI keys.
+Open `.env` in any text editor and add your OpenAI and SerpAPI keys. Optionally configure the telemetry destination:
+
+```
+OPENAI_API_KEY=sk-...
+SERPAPI_API_KEY=...
+
+# Telemetry routing — controls where traces are sent
+# Options: phoenix | arize | both | none
+OTEL_DESTINATION=phoenix
+
+# Local Phoenix (default)
+PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
+
+# Arize Cloud (optional — only needed if OTEL_DESTINATION=arize or both)
+# ARIZE_ENDPOINT=https://otlp.arize.com/v1
+# ARIZE_API_KEY=
+# ARIZE_SPACE_ID=
+```
 
 **Step 2.** Build and start the stack:
 
 ```
-docker compose up -d --build
+docker compose --profile phoenix up -d --build
 ```
 
-This builds the TravelShaper container with all dependencies and starts both the app and Phoenix. Takes 1–3 minutes on first build.
+Or use the Makefile, which reads `OTEL_DESTINATION` from `.env` and starts Phoenix only when needed:
+
+```
+make up
+```
+
+This builds the TravelShaper container with all dependencies and starts both the app and Phoenix (if the profile is active). Takes 1–3 minutes on first build.
 
 **Step 3.** Verify both containers are running:
 
@@ -137,7 +160,6 @@ Open [http://localhost:8000](http://localhost:8000) in any browser. The form col
 
 Open [http://localhost:6006](http://localhost:6006) in any browser. Every request to `/chat` or `/chat/stream` generates a trace. Click into any trace to see the full tool call chain — which tools were called, what arguments were passed, how long each step took, and the agent's final response. Phoenix runs as a separate container started by Docker Compose and requires no additional setup.
 
-
 ### Test the API with a single curl request
 
 ```
@@ -159,21 +181,6 @@ curl http://localhost:8000/health
 ```
 
 Expected output: `{"status":"ok"}`
-
-
-### Query trace information from the terminal
-
-Phoenix exposes a REST API at `localhost:6006`. To fetch recent spans:
-
-```
-curl -s http://localhost:6006/v1/spans?limit=10 | python3 -m json.tool
-```
-
-To fetch traces:
-
-```
-curl -s http://localhost:6006/v1/traces?limit=5 | python3 -m json.tool
-```
 
 ---
 
@@ -201,8 +208,6 @@ On Windows:
 python -m venv .venv
 ```
 
-This creates a `.venv/` directory inside `src/` that isolates all project dependencies from your system Python (and from other distributions like Anaconda). The `.venv/` directory is listed in `.gitignore` and will not be committed.
-
 **Step 3.** Activate the virtual environment:
 
 On macOS or Linux:
@@ -225,32 +230,19 @@ On Windows (PowerShell):
 
 If PowerShell blocks the script with a security error, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` first, then try again.
 
-Your terminal prompt should now show `(.venv)` at the beginning. This tells you the venv is active. If you open a new terminal, you will need to activate it again — the activation only applies to the current shell session.
-
 **Step 4.** Install dependencies:
 
 ```
 pip install requests arize-phoenix arize-phoenix-evals pandas openai
 ```
 
-The `requests` package is all that `traces/run_traces.py` needs. The remaining packages are for `evaluations/run_evals.py`, which uses the Phoenix client to pull traces and the Phoenix evals library to score them with gpt-4o. If your system has Anaconda installed, make sure your venv is not inheriting Anaconda's packages — run `conda deactivate` before activating your venv if you see `ValueError: numpy.dtype size changed`.
-
-You only need to install these once. In future terminal sessions, just activate the venv:
-
-On macOS or Linux: `cd src && source .venv/bin/activate`
-
-On Windows: `cd src` then `.venv\Scripts\activate.bat` or `.venv\Scripts\Activate.ps1`
-
-
 ---
 
 ## Generate Traces and Run Evaluations
 
-This is the core observability workflow: generate traces by sending real queries to the agent, then score those traces with three LLM-as-judge metrics. Both scripts run from the same venv in the same terminal session.
+This is the core observability workflow: generate traces by sending real queries to the agent, then score those traces with three LLM-as-judge metrics.
 
 Make sure you are in the `src/` directory with the venv active and the Docker stack is running.
-
-If you prefer to work with trace data offline, the trace generator saves each query's input and response to a timestamped JSON file in the `src/` directory.
 
 ### Generate traces
 
@@ -260,15 +252,6 @@ python -m traces.run_traces
 
 This fires 11 real queries against the server at `localhost:8000`, covering every tool combination, both budget voices, auto-correction, vague inputs, past-date error handling, and edge cases. All dates are computed dynamically relative to today so the script never goes stale.
 
-Results are saved to a timestamped JSON file in `src/` (e.g. `trace-results_2026-03-23_14-05-32.json`). Traces are also recorded in Phoenix at [http://localhost:6006](http://localhost:6006).
-
-You can limit the number of queries for a quick smoke test:
-
-```
-python -m traces.run_traces 3            # run first 3 queries only
-python -m traces.run_traces all          # run all 11 (the default)
-```
-
 ### Run evaluations
 
 Once traces exist in Phoenix, score them:
@@ -277,38 +260,15 @@ Once traces exist in Phoenix, score them:
 python -m evaluations.run_evals
 ```
 
-The script connects to Phoenix at `localhost:6006`, pulls the most recent traces, groups all spans by trace ID to identify the root span (user input + agent output) and child spans (actual tool calls), and scores each trace against three metrics. The tool correctness evaluator receives the real list of tools that were called — extracted from the trace data, not inferred from the response text.
-
-Each trace is scored by three separate gpt-4o calls (one per metric). The script reads your `OPENAI_API_KEY` from the `.env` file in `src/`. A typical run against the 11 traces from the trace generator takes 1–3 minutes. A heartbeat prints every 10 seconds so you know it hasn't hung.
-
-You can limit how many traces to evaluate:
-
-```
-python -m evaluations.run_evals              # evaluate 11 most recent traces (default)
-python -m evaluations.run_evals 5            # evaluate 5 most recent traces
-python -m evaluations.run_evals all          # evaluate all traces in Phoenix
-```
-
-Results are written back to Phoenix as annotations on the root spans and saved to a local JSON summary file (e.g. `eval-results_2026-03-23_14-08-12.json`).
-
-### The typical session
-
-The intended sequence is: generate traces, then immediately score them. Both commands run from the same venv, same directory, same terminal:
-
-```
-python -m traces.run_traces
-python -m evaluations.run_evals
-```
-
-Then open [http://localhost:6006](http://localhost:6006) and click the **Evaluations** tab to see scores alongside traces.
+The script connects to Phoenix at `localhost:6006`, pulls the most recent traces, groups all spans by trace ID to identify the root span (user input + agent output) and child spans (actual tool calls), and scores each trace against three metrics.
 
 ### What the three metrics measure
 
-**User Frustration** detects responses that are technically correct but experientially poor — curt, dismissive, or structured in a way that forces extra work. Any traces flagged as frustrated are worth investigating for system prompt adjustments.
+**User Frustration** detects responses that are technically correct but experientially poor.
 
-**Tool Usage Correctness** evaluates whether the agent called the right tools for the request. Unlike a naive approach that infers tool usage from the response text, this metric extracts the actual tool calls from the trace's child spans and passes them to the evaluator. This means it can correctly distinguish between "the right tool was called but failed" and "the wrong tool was called" — two very different problems with very different fixes.
+**Tool Usage Correctness** evaluates whether the agent called the right tools for the request, using actual tool calls extracted from trace child spans.
 
-**Answer Completeness** checks whether the response covers everything the user asked for, with scope awareness. A flights-only response is complete for a flights-only request. A full-trip query that's missing hotel recommendations is incomplete. The evaluator first determines what the user actually asked for, then checks each element.
+**Answer Completeness** checks whether the response covers everything the user asked for, with scope awareness.
 
 For the full evaluation prompt text and design rationale, see [docs/evaluation-prompts.md](src/docs/evaluation-prompts.md).
 
@@ -317,7 +277,7 @@ For the full evaluation prompt text and design rationale, see [docs/evaluation-p
 
 ## Run Everything Locally (Python venv — no Docker)
 
-This section covers running the server, tests, traces, and evaluations entirely from a local Python virtual environment. Use this when you want to develop, debug, or demo without Docker.
+This section covers running the server, tests, traces, and evaluations entirely from a local Python virtual environment.
 
 **Avoid port binding conflicts: Make sure that you don't have docker running containers before you deploy the app using python**
 
@@ -341,33 +301,15 @@ python -m venv .venv
 .venv\Scripts\activate.bat
 ```
 
-**Windows (PowerShell):**
-
-```bash
-cd src
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-Your prompt should now show `(.venv)`. Every command below assumes the venv is active.
-
 ### 2. Install all dependencies
 
 ```bash
-# Install pip and Poetry inside the venv
 pip install --upgrade pip
 pip install poetry==1.8.2
-
-# Install core dependencies + test runner (pytest, httpx)
 poetry install --no-interaction --no-ansi --no-root -E dev
-
-# Install packages that Poetry can't resolve (Phoenix version constraints)
-# plus the OpenAI SDK used by the validation classifiers
 pip install arize-phoenix arize-phoenix-evals arize-phoenix-otel \
             openinference-instrumentation-langchain openai pandas requests
 ```
-
-After this completes you have everything needed to run the server, tests, traces, and evaluations from the same environment.
 
 ### 3. Configure environment variables
 
@@ -380,12 +322,13 @@ Open `.env` and add your keys:
 ```
 OPENAI_API_KEY=sk-...
 SERPAPI_API_KEY=...
+OTEL_DESTINATION=phoenix
 PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
 ```
 
-Tests do **not** need API keys — all external calls are mocked. The keys are only required for running the live server, traces, and evaluations.
+Tests do **not** need API keys — all external calls are mocked.
 
-### 4. Run all 16 tests
+### 4. Run all 25 tests
 
 ```bash
 pytest tests/ -v
@@ -402,6 +345,8 @@ tests/test_agent.py::test_agent_graph_has_expected_nodes          PASSED
 tests/test_agent.py::test_agent_tools_registered                  PASSED
 tests/test_agent.py::test_cultural_guide_tool_has_routing_docstring PASSED
 tests/test_agent.py::test_voice_routing_selects_correct_prompt    PASSED
+tests/test_agent.py::test_llm_call_uses_dispatch_prompt_before_tools PASSED
+tests/test_agent.py::test_llm_call_uses_synthesis_prompt_after_tools PASSED
 tests/test_api.py::test_health_endpoint                           PASSED
 tests/test_api.py::test_chat_endpoint_accepts_message             PASSED
 tests/test_api.py::test_chat_accepts_valid_preferences            PASSED
@@ -410,41 +355,43 @@ tests/test_api.py::test_chat_skips_validation_for_empty_preferences PASSED
 tests/test_api.py::test_chat_accepts_valid_places                 PASSED
 tests/test_api.py::test_chat_rejects_invalid_place                PASSED
 tests/test_api.py::test_chat_auto_corrects_misspelled_place       PASSED
+tests/test_otel_routing.py::test_phoenix_destination_creates_one_exporter  PASSED
+tests/test_otel_routing.py::test_arize_destination_creates_one_exporter    PASSED
+tests/test_otel_routing.py::test_both_destination_creates_two_exporters    PASSED
+tests/test_otel_routing.py::test_none_destination_creates_no_exporters     PASSED
+tests/test_otel_routing.py::test_arize_missing_credentials_skips_silently  PASSED
+tests/test_otel_routing.py::test_phoenix_api_key_added_to_headers_when_present PASSED
+tests/test_otel_routing.py::test_phoenix_no_api_key_sends_no_auth_header   PASSED
 
-16 passed
+25 passed
 ```
 
-You can also run individual test files or single tests:
+You can also run individual test files:
 
 ```bash
 pytest tests/test_tools.py -v          # 4 tool tests
-pytest tests/test_agent.py -v          # 4 agent graph + routing tests
+pytest tests/test_agent.py -v          # 6 agent graph + routing + dispatch tests
 pytest tests/test_api.py -v            # 8 API + validation tests
-pytest tests/test_api.py::test_chat_rejects_invalid_place -v   # single test
+pytest tests/test_otel_routing.py -v   # 7 OTel routing tests
 ```
 
 A deprecation warning about `temperature` in `model_kwargs` is expected and harmless.
 
 ### 5. Start Phoenix (tracing UI)
 
-Phoenix needs to be running before you start the server if you want traces. You have two options:
+Phoenix needs to be running before you start the server if you want traces.
 
-**Option A — Docker (recommended, keeps Phoenix isolated):**
+**Option A — Docker (recommended):**
 
 ```bash
 docker run -d -p 6006:6006 --name phoenix arizephoenix/phoenix:latest
 ```
 
-**Option B — Python (runs in a separate terminal):**
+**Option B — Python (in a separate terminal):**
 
 ```bash
-# In a second terminal, with the venv active:
-cd src
-source .venv/bin/activate
-phoenix serve
+cd src && source .venv/bin/activate && phoenix serve
 ```
-
-Phoenix UI is at [http://localhost:6006](http://localhost:6006) either way.
 
 ### 6. Start the TravelShaper server
 
@@ -452,277 +399,17 @@ Phoenix UI is at [http://localhost:6006](http://localhost:6006) either way.
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The `--reload` flag watches for file changes and restarts automatically — useful during development. The browser UI is at [http://localhost:8000](http://localhost:8000) and the API is available for curl.
-
-Verify it's running:
-
-```bash
-curl http://localhost:8000/health
-# {"status":"ok"}
-```
-
 ### 7. Generate traces
-
-With both the server and Phoenix running:
 
 ```bash
 python -m traces.run_traces              # all 11 queries
-python -m traces.run_traces 3            # first 3 only (quick test)
+python -m traces.run_traces 3            # first 3 only
 ```
-
-Traces appear at [http://localhost:6006](http://localhost:6006) within seconds.
 
 ### 8. Run evaluations
 
-After traces exist in Phoenix:
-
 ```bash
-python -m evaluations.run_evals               # evaluate 11 most recent traces
-python -m evaluations.run_evals 5             # evaluate 5 most recent
-python -m evaluations.run_evals all           # evaluate everything
-```
-
-Results are written back to Phoenix and saved to a local JSON file.
-
-### Quick reference — the full session
-
-Open a terminal and run the complete sequence:
-
-```bash
-cd src
-source .venv/bin/activate          # activate venv (macOS/Linux)
-
-pytest tests/ -v                   # run all 16 tests (no API keys needed)
-
-uvicorn api:app --port 8000 &     # start server in background
-sleep 2                            # wait for startup
-
-python -m traces.run_traces 3             # generate 3 traces (quick smoke test)
-python -m evaluations.run_evals 3         # evaluate those 3 traces
-
-# Open http://localhost:8000 for the browser UI
-# Open http://localhost:6006 for Phoenix traces + evaluations
-```
-
-### Deactivating
-
-When you're done:
-
-```bash
-deactivate                         # exit the venv
-```
-
-The next time you return, just activate and go — no reinstall needed:
-
-```bash
-cd src
-source .venv/bin/activate          # macOS/Linux
-pytest tests/ -v                   # confirm everything still works
-```
-
-
----
-
-## API Endpoints and the Browser UI
-
-TravelShaper exposes a REST API and serves a browser UI from the same server. The browser UI is a single HTML file that calls the streaming endpoint under the hood — everything the UI can do, curl can do too. This section explains both interfaces and how to craft requests that get the best results from the agent.
-
-### The browser UI
-
-Open [http://localhost:8000](http://localhost:8000) in any browser. The form collects seven pieces of information:
-
-| Field | Required | Default | What it does |
-|-------|----------|---------|-------------|
-| Departing from | Yes | — | Free text. City or region — the agent resolves the nearest major airport. Examples: "San Francisco, CA", "London", "SFO". |
-| Destination | Yes | — | Free text. City, region, or country. Examples: "Tokyo, Japan", "Barcelona", "New Zealand". |
-| Departure date | Yes | Today | Date picker. Must be today or later. |
-| Duration | No | 2 weeks | Dropdown: 1 week, 2 weeks, 3 weeks, or 4 weeks. The return date is calculated automatically. |
-| Budget | No | Save money | Toggle between "Save money" and "Full experience". This controls which system prompt and writing voice the agent uses, and affects how hotels are sorted (lowest price vs. highest rating). |
-| Interests | No | Food checked | Six checkboxes: Food, Arts, Photo, Nature, Fitness, Nightlife. Checked interests are included in the message and drive DuckDuckGo search queries for destination-specific recommendations. |
-| Additional preferences | No | Empty | Free-text field, up to 500 characters. Used to refine web search queries — things like dietary restrictions, mobility needs, travel companions, or style preferences. This field is safety-checked by gpt-4o before the agent sees it. |
-
-When you click "Plan my trip →", the UI assembles these fields into a structured natural-language message and sends it to `POST /chat/stream`. The SSE stream shows real-time status updates (which tools are being called, when the briefing is being written) before rendering the final result as a formatted report with numbered sections.
-
-### How the UI constructs its message
-
-Understanding how the UI builds the message is useful if you want to replicate its behaviour from curl or a script. The form fields are joined into a single string that looks like this:
-
-```
-I am planning a trip departing from San Francisco, CA (please identify the
-nearest major international airport). Destination: Tokyo, Japan. Departure:
-2026-10-15. Return: 2026-10-29 (2 weeks). Budget preference: save money.
-Interests: food and dining, photography. Please provide a complete travel
-briefing with hyperlinks for every named place, restaurant, hotel, and
-attraction.
-```
-
-The `departure` and `destination` values are also sent as separate fields in the JSON body, which triggers place validation before the agent runs. If the user typed something in the preferences box, it is sent as a separate `preferences` field — the API appends it to the message internally, framed as DuckDuckGo search context.
-
-### Request schema
-
-All endpoints that accept a body use the same schema. The `message` field is the only required field — everything else is optional but improves the quality of the response and enables validation.
-
-```json
-{
-  "message": "string (required) — the trip planning request",
-  "departure": "string or null — raw departure place name, triggers validation",
-  "destination": "string or null — raw destination place name, triggers validation",
-  "preferences": "string or null — free-form text, max 500 chars, safety-checked"
-}
-```
-
-### Response schema
-
-`POST /chat` returns a single JSON object:
-
-```json
-{
-  "response": "string — the full travel briefing in markdown"
-}
-```
-
-### Crafting a complete request with curl
-
-A minimal request works — the agent will do its best with whatever you provide. But a complete request gives the agent everything it needs to call all four tools and produce a full briefing. Here is the difference.
-
-**Minimal request** — the agent receives only the message and infers what it can. No place validation runs. Results are usable but less reliable:
-
-```bash
-curl -s -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Plan a trip from NYC to Rome, September, save money, food and history."}' \
-  | python3 -m json.tool
-```
-
-**Complete request** — mirrors exactly what the browser UI sends. Place validation catches misspellings, the budget keyword triggers the correct voice, dates are explicit so the flight and hotel tools get precise parameters, and interests guide DuckDuckGo queries:
-
-```bash
-curl -s -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "I am planning a trip departing from New York City, NY (please identify the nearest major international airport). Destination: Rome, Italy. Departure: 2026-09-10. Return: 2026-09-24 (2 weeks). Budget preference: save money. Interests: food and dining, arts and culture. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
-    "departure": "New York City, NY",
-    "destination": "Rome, Italy",
-    "preferences": "I want to eat in Trastevere, not near the Vatican. Allergic to shellfish."
-  }' | python3 -m json.tool
-```
-
-**What makes the message effective for the agent:**
-
-The agent reads the `message` field as natural language and decides which tools to call based on what information is present. Including all of these elements gives it the clearest signal:
-
-An explicit departure city with the phrase "please identify the nearest major international airport" tells the agent to convert the city name to an IATA code for the flight search tool. Without this, the agent sometimes passes city names instead of airport codes, which causes SerpAPI to return empty results.
-
-Dates in `YYYY-MM-DD` format are passed directly to the flight and hotel tools. Vague dates like "mid-September" work but force the agent to pick specific dates on its own, which may not match your intent.
-
-The phrase `Budget preference: save money` (or `full experience`) triggers voice routing. The agent checks for the exact keywords `save money`, `budget`, `cheapest`, or `spend as little` to select the budget voice. Any other phrasing defaults to the full-experience voice. This also affects hotel sorting — `save money` sets `sort_by=3` (lowest price) while `full experience` sets `sort_by=13` (highest rating).
-
-Listing interests by name ("food and dining, photography") gives the agent specific terms to search for with DuckDuckGo. Without interests, the agent skips interest-based search and focuses on flights, hotels, and cultural prep.
-
-The closing instruction "Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction" reinforces the system prompt's hyperlink requirement. The agent is already instructed to include links, but this explicit request in the user message improves compliance.
-
-The `preferences` field is appended to the message internally as "Additional context for web search queries (use when calling duckduckgo_search to refine results): ..." — so it specifically influences the DuckDuckGo tool, not the flight or hotel searches.
-
-### UI option values for API use
-
-The browser UI presents dropdown menus, toggles, and checkboxes. Under the hood, each option maps to a specific string value that gets embedded in the `message` field. When crafting curl requests, use these exact strings to replicate what the UI sends.
-
-**Budget modes** — the UI sends one of these two phrases inside the message as `Budget preference: <value>`. The value controls both the writing voice and the hotel sort order:
-
-| UI label | Value in message | Voice | Hotel sort |
-|----------|-----------------|-------|------------|
-| 💰 Save money | `save money` | Bourdain / Billy Dee / Gladwell | `sort_by=3` (lowest price) |
-| ✨ Full experience | `full experience` | Leach / Pharrell / Rushdie | `sort_by=13` (highest rating) |
-
-**Interests** — the UI sends checked interests as a comma-separated list inside the message as `Interests: <value>, <value>.` Each checkbox maps to a specific string. You can combine any number of them. When no interests are checked, the UI sends "No specific interests — general recommendations welcome." instead:
-
-| UI label | Value in message |
-|----------|-----------------|
-| 🍜 Food | `food and dining` |
-| 🎨 Arts | `arts and culture` |
-| 📸 Photo | `photography` |
-| 🌿 Nature | `nature and outdoors` |
-| 🏃 Fitness | `fitness and sports` |
-| 🎶 Nightlife | `nightlife and events` |
-
-For example, a message with food, photography, and nightlife selected would contain: `Interests: food and dining, photography, nightlife and events.`
-
-**Trip duration** — the UI sends the duration as part of the date range in the message. The return date is calculated by adding the selected number of weeks to the departure date. The duration dropdown maps to these values:
-
-| UI label | Weeks added | Example in message |
-|----------|------------|-------------------|
-| 1 week | 7 days | `Return: 2026-10-22 (1 week)` |
-| 2 weeks | 14 days | `Return: 2026-10-29 (2 weeks)` |
-| 3 weeks | 21 days | `Return: 2026-11-05 (3 weeks)` |
-| 4 weeks | 28 days | `Return: 2026-11-12 (4 weeks)` |
-
-**Putting it all together** — here is a curl request that uses all six interests, the full-experience budget mode, a 3-week duration, and a preferences field:
-
-```bash
-curl -s -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "I am planning a trip departing from Miami, FL (please identify the nearest major international airport). Destination: Buenos Aires, Argentina. Departure: 2026-11-01. Return: 2026-11-22 (3 weeks). Budget preference: full experience. Interests: food and dining, arts and culture, photography, nature and outdoors, fitness and sports, nightlife and events. Please provide a complete travel briefing with hyperlinks for every named place, restaurant, hotel, and attraction.",
-    "departure": "Miami, FL",
-    "destination": "Buenos Aires, Argentina",
-    "preferences": "I am a serious amateur photographer and want to find street markets and tango venues that are not staged for tourists. I am also training for a marathon and need running routes."
-  }' | python3 -m json.tool
-```
-
-### Scoped requests
-
-You do not have to ask for everything. The agent handles partial requests gracefully and only calls the tools that are relevant:
-
-```bash
-# Flights only — agent calls search_flights, skips hotels and cultural guide
-curl -s -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "I am planning a trip departing from Los Angeles, CA (please identify the nearest major international airport). Destination: London, United Kingdom. Departure: 2026-12-15. Return: 2026-12-28. Budget preference: save money. Please focus only on flight options — I have accommodation sorted.",
-    "departure": "Los Angeles, CA",
-    "destination": "London, United Kingdom"
-  }' | python3 -m json.tool
-
-# Cultural guide only — no flights, no hotels
-curl -s -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "I am visiting Japan for the first time next month. What should I know about etiquette, language, what to wear, and what not to do?",
-    "destination": "Japan"
-  }' | python3 -m json.tool
-
-# Already at destination — interest-based recommendations only
-curl -s -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "I am already in Lisbon, Portugal. I do not need flights or hotels. I want to know the best photography spots and where to eat that is not a tourist trap.",
-    "destination": "Lisbon, Portugal",
-    "preferences": "I shoot film, not digital. Looking for texture — peeling tiles, old men playing cards, laundry across alleys."
-  }' | python3 -m json.tool
-```
-
-### `POST /chat/stream` — SSE streaming
-
-Same request body as `/chat`. The browser UI uses this endpoint. Instead of waiting for the full response, it streams Server-Sent Events as the agent works. Each event has a `type` and a JSON `data` payload:
-
-| Event type | When it fires | Data shape |
-|------------|---------------|------------|
-| `status` | Each time a tool is called or the agent changes state | `{"message": "✈️  Searching flights"}` |
-| `place_corrected` | A misspelled place name was auto-corrected | `{"field": "destination", "original": "Roam", "canonical": "Rome, Italy"}` |
-| `place_error` | A place name was rejected (fictional, ambiguous) | `{"field": "destination", "message": "We couldn't find a place called 'Fakeville'."}` |
-| `validation_error` | The preferences field was rejected by safety check | `{"message": "Your additional preferences could not be used: ..."}` |
-| `done` | The agent finished — contains the full briefing | `{"response": "full markdown text..."}` |
-| `error` | Something went wrong during agent execution | `{"message": "error description"}` |
-
-Status messages cycle through tool-specific labels as the agent works: "✈️  Searching flights", "🏨  Finding hotels", "🗺️  Gathering cultural guide", "🔍  Searching the web", "📊  Processing search results", and "✍️  Writing your personalised briefing". The final status before `done` is always "🎉 Your briefing is ready".
-
-### `GET /health`
-
-Returns `{"status": "ok"}` with a 200 status code. Used by Docker's health check (configured in the Dockerfile to poll every 30 seconds) and useful for verifying the server is alive from scripts or monitoring tools:
-
-```bash
-curl http://localhost:8000/health
-# {"status":"ok"}
+python -m evaluations.run_evals
 ```
 
 ---
@@ -732,7 +419,8 @@ curl http://localhost:8000/health
 ```
 src/
 ├── api.py                          # FastAPI server — /chat, /chat/stream, /health, static UI
-├── agent.py                        # LangGraph agent — dual system prompts, voice routing
+├── agent.py                        # LangGraph agent — three system prompts, voice routing, dispatch phase
+├── otel_routing.py                 # OTel config routing (OTEL_DESTINATION in .env)
 ├── static/index.html               # Browser UI — Bebas Neue / Cormorant Garamond / DM Sans
 ├── tools/
 │   ├── __init__.py                 # serpapi_request() helper
@@ -755,8 +443,9 @@ src/
 │   └── README.md                   # Trace query documentation and usage
 ├── tests/
 │   ├── test_tools.py               # 4 tool tests
-│   ├── test_agent.py               # 4 agent graph + routing tests
-│   └── test_api.py                 # 8 endpoint + validation tests
+│   ├── test_agent.py               # 6 agent graph, routing + dispatch tests
+│   ├── test_api.py                 # 8 API + validation tests
+│   └── test_otel_routing.py        # 7 OTel routing tests
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── PRD.md
@@ -779,25 +468,25 @@ src/
 
 ## Documentation
 
-The `docs/` directory contains the full design record for the project. Each document covers a specific dimension of the system and is written to be self-contained — you can read any one of them without needing the others first.
+The `docs/` directory contains the full design record for the project. Each document covers a specific dimension of the system and is written to be self-contained.
 
 | Document | Description |
 |----------|-------------|
-| [ARCHITECTURE.md](src/docs/ARCHITECTURE.md) | Software architecture document covering component design, data flow, LLM decision making, system prompt rationale, tool design patterns, input validation architecture, deployment topology, and the decision log for every major technical choice. The most comprehensive single document in the project. |
-| [PRD.md](src/docs/PRD.md) | Product requirements document defining the target user, jobs to be done, functional and non-functional requirements, scope boundaries, API contract, evaluation criteria, and the future roadmap. Start here if you want to understand *what* TravelShaper is and *why* it makes the choices it does. |
-| [system-prompt-spec.md](src/docs/system-prompt-spec.md) | Specification for the two system prompts (save-money and full-experience) including the voice definitions, routing logic, shared structural requirements, tool usage instructions, and the design reasoning behind using two prompts instead of one. |
-| [test-specification.md](src/docs/test-specification.md) | Complete specification for all 16 tests across three test files, including mock path rules, exact mock data shapes, and assertion criteria for every test case. |
-| [docker-spec.md](src/docs/docker-spec.md) | Dockerfile and docker-compose.yml with line-by-line commentary explaining why each decision was made — including why Phoenix packages are installed via pip, why the full `arize-phoenix` server is excluded from the app container, and the `temperature` model_kwargs workaround. |
-| [evaluation-prompts.md](src/docs/evaluation-prompts.md) | The exact prompts used in the Phoenix evaluation pipeline for all three metrics (user frustration, tool usage correctness, answer completeness), with rationale for why each metric was chosen based on specific failure modes observed during development. |
-| [trace-queries.md](src/docs/trace-queries.md) | All 11 trace queries with their expected tool dispatch, voice routing, and a coverage matrix showing which tools, budget modes, and edge cases each query exercises. |
-| [implementation-plan.md](src/docs/implementation-plan.md) | Step-by-step build plan used during development, with acceptance criteria for each step. Useful for understanding the order in which the system was assembled. |
-| [presentation-outline.md](src/docs/presentation-outline.md) | 20–25 minute presentation outline covering architecture, observability (OpenTelemetry / OpenInference concepts), evaluation methodology, deployment design, and a live demo script with both browser UI and curl options. |
+| [ARCHITECTURE.md](src/docs/ARCHITECTURE.md) | Software architecture document covering component design, data flow, LLM decision making, system prompt rationale, tool design patterns, input validation architecture, OTel routing, deployment topology, and the decision log. |
+| [PRD.md](src/docs/PRD.md) | Product requirements document defining the target user, jobs to be done, functional and non-functional requirements, scope boundaries, API contract, and evaluation criteria. |
+| [system-prompt-spec.md](src/docs/system-prompt-spec.md) | Specification for the three system prompts (dispatch, save-money, full-experience) including voice definitions, phase-based routing logic, and design reasoning. |
+| [test-specification.md](src/docs/test-specification.md) | Complete specification for all 25 tests across four test files, including mock path rules, exact mock data shapes, and assertion criteria. |
+| [docker-spec.md](src/docs/docker-spec.md) | Dockerfile and docker-compose.yml with line-by-line commentary, including why OTel packages are installed via pip and why Phoenix uses Docker profiles. |
+| [evaluation-prompts.md](src/docs/evaluation-prompts.md) | The exact prompts used in the Phoenix evaluation pipeline for all three metrics, with rationale for why each metric was chosen. |
+| [trace-queries.md](src/docs/trace-queries.md) | All 11 trace queries with their expected tool dispatch, voice routing, and a coverage matrix. |
+| [implementation-plan.md](src/docs/implementation-plan.md) | Step-by-step build plan used during development. |
+| [presentation-outline.md](src/docs/presentation-outline.md) | 20–25 minute presentation outline. |
 
 ---
 
 ## Architecture
 
-The agent uses a standard LangGraph ReAct loop. The graph topology is unchanged from the starter app — the extension adds tools, not complexity.
+The agent uses a standard LangGraph ReAct loop. The graph topology is unchanged from the starter app — the extension adds tools, not complexity. Token usage is optimized with a two-phase prompt strategy: a minimal dispatch prompt before tools run, and a full voice prompt during synthesis.
 
 ```
 Browser / curl
@@ -806,14 +495,16 @@ Browser / curl
   └── POST /chat         (sync — curl / tests)
            │
            ▼
-     Place + Preference Validation (gpt-4o)
+     Place + Preference Validation (gpt-4o-mini)
            │
            ▼
      LangGraph Agent
            │
-     get_system_prompt(message)
-           ├── "save money" → Bourdain / Billy Dee / Gladwell voice
-           └── default     → Leach / Pharrell / Rushdie voice
+     get_system_prompt(message, phase)
+           ├── phase="dispatch" → DISPATCH_PROMPT (tool selection only)
+           └── phase="synthesis"
+                 ├── "save money" → Bourdain / Billy Dee / Gladwell voice
+                 └── default     → Leach / Pharrell / Rushdie voice
            │
      llm_call (gpt-5.3-chat-latest)
            │
@@ -822,12 +513,27 @@ Browser / curl
            ├── get_cultural_guide   (SerpAPI → Google Search)
            └── duckduckgo_search    (DuckDuckGo, no key needed)
            │
-     tool_node → llm_call (synthesis)
+     tool_node → llm_call (synthesis with voice prompt)
            │
      SSE stream / JSON response → browser / client
 ```
 
-For the full architecture narrative — component design, data flow, LLM decision making, prompt design rationale, deployment topology, and security considerations — see [docs/ARCHITECTURE.md](src/docs/ARCHITECTURE.md).
+For the full architecture narrative, see [docs/ARCHITECTURE.md](src/docs/ARCHITECTURE.md).
+
+---
+
+## Telemetry Configuration
+
+TravelShaper uses configurable OTel routing controlled by `OTEL_DESTINATION` in your `.env` file. This determines where traces are sent without any code changes.
+
+| Value | Destination | Required env vars |
+|-------|-------------|-------------------|
+| `phoenix` (default) | Local Phoenix or Phoenix Cloud | `PHOENIX_ENDPOINT`; optionally `PHOENIX_API_KEY` for Cloud |
+| `arize` | Arize Cloud | `ARIZE_ENDPOINT`, `ARIZE_API_KEY`, `ARIZE_SPACE_ID` |
+| `both` | Phoenix and Arize simultaneously | All of the above |
+| `none` | Disabled — no traces sent | None |
+
+The routing module (`otel_routing.py`) reads these variables at startup and configures a `TracerProvider` with the appropriate OTLP exporters. If credentials are missing for a destination, it logs a warning and skips that destination gracefully.
 
 ---
 
@@ -835,66 +541,32 @@ For the full architecture narrative — component design, data flow, LLM decisio
 
 There is a pattern in how TravelShaper makes its choices, and the pattern is worth naming: every decision optimises for the shortest path to a working demo that is still architecturally honest.
 
-- **Single HTML file UI** — no npm, no build step; served directly by FastAPI alongside the REST API. The constraint produced a better result: one file that loads instantly and has zero deployment friction.
-- **SerpAPI as single data provider** — one key powers flights, hotels, and scoped web searches with structured JSON. The alternative was three separate APIs with three approval processes.
-- **Cultural guide as a first-class tool** — etiquette and language prep is what separates a useful travel briefing from a price comparison. Most travel tools skip this entirely.
-- **DuckDuckGo as fallback** — covers general queries without requiring an additional API key. Already present in the starter code.
-- **Two system prompts, not one** — a single prompt with conditional voice instructions produces blended, inconsistent output. Two separate prompts let the model commit fully to one register.
-- **Place validation before agent** — gpt-4o catches misspellings and rejects fictional places before the expensive agent runs. A 1-second validation call saves 30 seconds of wasted agent time. Validation only runs when `departure` and `destination` fields are explicitly provided in the request body.
+- **Single HTML file UI** — no npm, no build step; served directly by FastAPI alongside the REST API.
+- **SerpAPI as single data provider** — one key powers flights, hotels, and scoped web searches with structured JSON.
+- **Cultural guide as a first-class tool** — etiquette and language prep is what separates a useful travel briefing from a price comparison.
+- **DuckDuckGo as fallback** — covers general queries without requiring an additional API key.
+- **Two voice prompts, not one** — a single prompt with conditional voice instructions produces blended, inconsistent output.
+- **Dispatch prompt for tool selection** — sending the full voice prompt before tools run wastes ~300–600 tokens on instructions the model cannot act on yet.
+- **Place validation before agent** — gpt-4o-mini catches misspellings and rejects fictional places before the expensive agent runs.
+- **gpt-4o-mini for validation** — faster and cheaper than gpt-4o for simple classification tasks; sufficient accuracy for binary decisions.
 - **Single-turn design** — each request is independent. This is a deliberate product boundary, not a gap.
-- **`openai` SDK installed via pip, not Poetry** — the OpenAI SDK is used only by the validation classifiers in `api.py`. It is installed via pip in the Dockerfile (and must be installed manually in venv mode) rather than declared in `pyproject.toml`, to keep the Poetry dependency graph clean alongside the Phoenix packages that also require special handling.
+- **Configurable OTel routing** — `OTEL_DESTINATION` in `.env` controls where traces go, supporting local Phoenix, Arize Cloud, both, or none.
 
 ---
 
 ## Security Considerations and Input Validation
 
-TravelShaper validates user input in three stages before the agent processes a request. Understanding this pipeline is useful for knowing what the system protects against, what it does not, and how to interpret rejection errors in both the sync and streaming endpoints.
+TravelShaper validates user input in three stages before the agent processes a request.
 
 ### The validation pipeline
 
-The first stage is Pydantic schema validation. The `ChatRequest` model in `api.py` requires the `message` field to be a non-empty string. The `departure`, `destination`, and `preferences` fields are optional strings that default to `None`. If the request body fails schema validation (missing message, wrong types), FastAPI returns HTTP 422 before any application code runs.
+The first stage is Pydantic schema validation. The second stage is place validation — `validate_place()` sends each place name to gpt-4o-mini with a structured prompt. The third stage is preferences validation — `validate_preferences()` sends the text to gpt-4o-mini with a safety classifier prompt.
 
-The second stage is place validation. When `departure` or `destination` are provided and non-empty, `validate_place()` sends each one to gpt-4o with a structured prompt asking whether it is a real, unambiguous place. The classifier returns one of four outcomes: the place is valid and canonical (e.g. "Tokyo, Japan" → accepted as-is), the place is a misspelling or common abbreviation (e.g. "Roam" → corrected to "Rome, Italy"), the place is ambiguous (e.g. "Springfield" → rejected with a message listing possible matches), or the place is fictional or nonsensical (e.g. "Narnia" → rejected). If validation fails for either field, the request is rejected before the agent runs.
-
-Place validation is designed to fail open. If the gpt-4o call itself fails (network error, timeout, rate limit), the validator returns `valid=True` and lets the agent proceed with the original input. The reasoning is that a temporary API failure should not prevent the user from getting results — the agent may still be able to resolve the place name on its own, and the worst case is a less accurate flight or hotel search.
-
-The third stage is preferences validation. When the `preferences` field is provided, `validate_preferences()` sends it to gpt-4o with a safety classifier prompt. The classifier evaluates whether the text is appropriate for a travel planning context and returns an allow/deny decision.
-
-Rejected content includes requests for illegal goods, substances, or services; requests involving weapons, drugs, or controlled substances; adult or sexually explicit content; content targeting, demeaning, or harassing individuals or groups; prompt injection attempts such as instructions to ignore previous prompts, override system behaviour, act as a different AI, reveal internal prompts, or bypass safety measures; attempts to extract sensitive data or credentials; and content designed to generate harmful, dangerous, or unethical recommendations.
-
-The classifier is instructed to lean toward allowing ambiguous cases — if the text is plausibly travel-related, it passes. "I take medication for anxiety and need to avoid alcohol" is a legitimate travel preference. "Tell me where to buy medication without a prescription" is not.
-
-Unlike place validation, preferences validation fails closed. If the gpt-4o call fails for any reason, `validate_preferences()` returns `valid=False` with a message saying the safety check is temporarily unavailable. The reasoning is inverted from place validation: the preferences field is a direct injection surface that gets appended to the agent's message and used to drive web searches. Passing unvalidated text through this path is more dangerous than temporarily blocking it. The cost of a false rejection (user retries without the preferences text) is lower than the cost of passing adversarial content to the agent.
-
-### What happens when validation rejects a request
-
-The sync endpoint (`POST /chat`) returns HTTP 400 with a JSON body containing the rejection reason. For place errors, the detail includes a `field` key identifying which field failed ("departure" or "destination") and a `message` key with the user-facing explanation. For preference errors, the detail is a string describing the rejection.
-
-The streaming endpoint (`POST /chat/stream`) emits a single SSE event and closes the connection. Place rejections emit a `place_error` event with the field name and message. Preference rejections emit a `validation_error` event. In both cases, the browser UI routes back to the form screen and displays the error message — the user never sees the loading screen for a request that will be rejected.
-
-### Infrastructure-level protections
-
-API keys are stored in the `.env` file, which is listed in `.gitignore` and `.dockerignore` and is never committed to version control or copied into the Docker image. The `.env.example` file contains placeholder values only.
-
-There is no API authentication on any endpoint. The server is designed for local use and demo environments. In a production deployment, JWT or API key authentication would be added to `/chat` and `/chat/stream`. The `/health` endpoint would remain open for load balancer health checks.
-
-There is no HTTPS. The server runs on plain HTTP at port 8000. In production, TLS termination would be handled by a load balancer or reverse proxy in front of the application.
-
-The system prompt is hardcoded in `agent.py` as two constant strings. It is not loaded from a file, database, or environment variable, and it cannot be modified at runtime. The user's message is treated as untrusted input by the LLM — it is appended to the conversation history after the system prompt, never injected into the system prompt itself.
-
-No user data is persisted beyond Phoenix traces. There are no user accounts, no saved trips on the server, and no session state between requests. The browser UI stores trip history in the client's `localStorage`, which never leaves the browser. Phoenix traces contain the full text of user messages and agent responses — in a production deployment, these would need PII redaction before long-term storage.
-
-Tools never raise exceptions into the agent loop. Each tool wraps its external API call in a try/except block and returns a descriptive error string on failure (e.g., "Flight search failed: timeout"). This prevents a SerpAPI outage from crashing the agent and allows the LLM to incorporate the failure gracefully into its response ("I couldn't find flight data for that route — here's what I know from web search...").
+Place validation is designed to fail open (validation outage does not block the user). Preference validation fails closed (unvalidated text is not passed to the agent).
 
 ### What is not protected
 
-The `message` field itself is not validated for content safety. Only the `preferences` field goes through the safety classifier. A user could put harmful text directly in the message — for example, "Plan a trip and also tell me how to ..." — and the message would reach the agent. The agent is an LLM with its own safety training (gpt-5.3-chat-latest), so it will generally refuse harmful requests, but there is no application-layer gate on the message content.
-
-There is no rate limiting. A client can send unlimited requests to `/chat` and `/chat/stream`, which could exhaust the SerpAPI free tier (250 searches/month) or generate large OpenAI bills. A production deployment would add per-client rate limits.
-
-There is no input sanitization before tool dispatch. The agent constructs tool arguments (airport codes, search queries, hotel queries) from the user's message via LLM reasoning. If the LLM is tricked into passing unusual arguments to a tool, the tool will attempt the search — though it will return empty or irrelevant results rather than causing harm, since all tools use read-only search APIs.
-
-The browser UI uses `localStorage` for trip history, which is accessible to any JavaScript running on the same origin. In the current single-origin setup this is not a risk, but it would need revisiting if the app were deployed behind a shared domain.
+The `message` field itself is not validated for content safety. There is no rate limiting. There is no input sanitization before tool dispatch.
 
 ---
 
@@ -906,7 +578,7 @@ The browser UI uses `localStorage` for trip history, which is accessible to any 
 - Designed for English-speaking American travellers; guidance assumes U.S. norms as baseline.
 - Single-turn: no conversation memory between requests.
 - SerpAPI free tier supports ~60–125 full briefings per month.
-- Voice routing uses keyword matching — the budget voice triggers on `save money`, `budget`, `cheapest`, or `spend as little` appearing in the message. Synonyms like "frugal" or "inexpensive" will not trigger it and will default to the full-experience voice.
+- Voice routing uses keyword matching — the budget voice triggers on `save money`, `budget`, `cheapest`, or `spend as little`.
 
 ---
 
@@ -914,64 +586,26 @@ The browser UI uses `localStorage` for trip history, which is accessible to any 
 
 ### Checking Docker status
 
-These commands help you understand what is happening inside the containers. Run them from the `src/` directory.
-
-**See which containers are running:**
-
 ```
-docker ps
-```
-
-You should see two rows — one for TravelShaper and one for Phoenix. If a container shows `Restarting` or is missing, it likely crashed on startup. Check its logs.
-
-**See containers that are stopped or crashed:**
-
-```
-docker ps -a
-```
-
-**View logs for a specific service:**
-
-```
+docker ps                # running containers
+docker ps -a             # including stopped
 docker compose logs --tail 100 travelshaper
 docker compose logs --tail 100 phoenix
 ```
 
-**Follow logs in real time** (press `Ctrl+C` to stop):
-
-```
-docker compose logs -f travelshaper
-```
-
-**Restart a single service without rebuilding:**
-
-```
-docker compose restart travelshaper
-```
-
-**Full reset** — stop everything, rebuild from scratch, and start fresh:
-
-```
-docker compose down
-docker compose build --no-cache
-docker compose up -d
-```
-
 ### Common issues
 
-**Server won't start** — confirm your `.env` exists with valid keys. Check the logs with `docker compose logs --tail 50 travelshaper` and look for error messages. A common cause is a missing or malformed `.env` file. Try rebuilding with `docker compose down && docker compose up -d --build`.
+**Server won't start** — confirm your `.env` exists with valid keys. Check `docker compose logs --tail 50 travelshaper`.
 
-**Auth error from OpenAI or SerpAPI** — check your `.env` file. Verify the SerpAPI key at [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key). Verify the OpenAI key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
+**Auth error from OpenAI or SerpAPI** — check your `.env` file.
 
-**Tests fail with ModuleNotFoundError** — the most common cause is running pytest outside the virtual environment. Check that you see `(.venv)` in your terminal prompt. If not, activate the venv (see "Set Up Python for Tests and Traces" above). If the missing module is `pytest` or `httpx`, run `poetry install -E dev`. If the missing module is `openai`, run `pip install openai`. Make sure you are running pytest from inside the `src/` directory.
+**Tests fail with ModuleNotFoundError** — ensure venv is active (`(.venv)` in prompt). Run `poetry install -E dev`. If the missing module is `openai`, run `pip install openai`.
 
-**Trace generator fails with `ConnectionError`** — the TravelShaper server is not running. Start the Docker stack with `docker compose up -d` and wait for the health check to pass (`curl http://localhost:8000/health`), then run `python -m traces.run_traces` again.
+**Trace generator fails with `ConnectionError`** — the TravelShaper server is not running.
 
-**Trace generator saves a JSON file but some queries show errors** — open the JSON file and check the `status` and `error` fields for each result. Common causes: an expired or missing SerpAPI key, or an expired OpenAI key. Check your `.env` file inside `src/`.
+**Missing traces in Phoenix** — confirm Phoenix is running (`docker ps`). Run at least one `/chat` query.
 
-**Poor or incomplete results** — include origin, destination, dates, and budget in your request. Check SerpAPI usage (free tier: 250 searches/month). Try well-known destinations first.
-
-**Missing traces in Phoenix** — confirm Phoenix is running (`docker ps` should show the Phoenix container). Run at least one `/chat` query, then refresh the Phoenix UI at [http://localhost:6006](http://localhost:6006).
+**Phoenix not starting** — if `OTEL_DESTINATION` is set to `arize` or `none`, Phoenix won't start (by design). Set it to `phoenix` or `both` and use `make up` or `docker compose --profile phoenix up -d`.
 
 ---
 
