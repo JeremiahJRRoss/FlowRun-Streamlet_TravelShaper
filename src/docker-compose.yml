@@ -10,9 +10,6 @@ services:
       - ARIZE_ENDPOINT=${ARIZE_ENDPOINT:-}
       - ARIZE_API_KEY=${ARIZE_API_KEY:-}
       - ARIZE_SPACE_ID=${ARIZE_SPACE_ID:-}
-    depends_on:
-      phoenix:
-        condition: service_started
     restart: unless-stopped
 
   phoenix:
