@@ -1,6 +1,6 @@
 # Docker Specification — TravelShaper Travel Assistant
 
-**Version:** 2.0 (v0.1.4)
+**Version:** 2.1 (v0.3.2)
 
 ---
 
@@ -31,10 +31,16 @@ RUN poetry config virtualenvs.create false \
 # Install packages that cannot go through Poetry due to version constraints:
 # - arize-phoenix-otel: narrow Python version bounds conflict with Poetry resolver
 # - openinference-instrumentation-langchain: same constraint family
+# - openinference-semantic-conventions: OpenInference attribute keys for Phoenix UI
+# - opentelemetry-sdk: core OTel SDK used by otel_routing.py TracerProvider
+# - opentelemetry-exporter-otlp-proto-http: OTLP exporter for Phoenix and Arize
 # - openai: direct SDK needed for place + preference validation classifiers
 RUN pip install --no-cache-dir \
     arize-phoenix-otel \
     openinference-instrumentation-langchain \
+    openinference-semantic-conventions \
+    opentelemetry-sdk \
+    opentelemetry-exporter-otlp-proto-http \
     openai
 
 # Copy application code
@@ -58,9 +64,9 @@ CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ```bash
 # Force clean rebuild (recommended after code changes)
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
+docker compose down
+docker compose build --no-cache
+docker compose up -d
 ```
 
 > **Important:** Always use `--no-cache` after modifying Python files. Docker caches
@@ -79,7 +85,11 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
+      - OTEL_DESTINATION=${OTEL_DESTINATION:-phoenix}
       - PHOENIX_ENDPOINT=http://phoenix:6006/v1/traces
+      - ARIZE_ENDPOINT=${ARIZE_ENDPOINT:-}
+      - ARIZE_API_KEY=${ARIZE_API_KEY:-}
+      - ARIZE_SPACE_ID=${ARIZE_SPACE_ID:-}
     depends_on:
       phoenix:
         condition: service_started
@@ -90,17 +100,34 @@ services:
     ports:
       - "6006:6006"
     restart: unless-stopped
+    profiles:
+      - phoenix
 ```
 
 ### Run with Docker Compose
 
+The Makefile reads `OTEL_DESTINATION` from `.env` and starts Phoenix only when
+needed:
+
 ```bash
-docker-compose up --build -d
+make up        # reads .env, starts Phoenix if OTEL_DESTINATION=phoenix or both
+make down      # stops the stack
 ```
 
-This starts:
-- TravelShaper API + browser UI at `http://localhost:8000`
-- Phoenix tracing UI at `http://localhost:6006`
+Or manually:
+
+```bash
+# With Phoenix (default):
+docker compose --profile phoenix up -d --build
+
+# Without Phoenix (e.g. Arize-only or none):
+docker compose up -d --build
+```
+
+| Service | URL | When |
+|---------|-----|------|
+| TravelShaper API + browser UI | http://localhost:8000 | Always |
+| Phoenix tracing UI | http://localhost:6006 | When profile `phoenix` is active |
 
 ---
 
@@ -113,9 +140,14 @@ This starts:
 __pycache__
 *.pyc
 .pytest_cache
+.venv
 docs/
+tests/
+scripts/
 *.md
 !README.md
+spans_export.csv
+run_traces.sh
 ```
 
 ---
@@ -137,10 +169,23 @@ Phoenix runs in its own container (`arizephoenix/phoenix:latest`) and TravelShap
 only needs the lightweight sender packages (`arize-phoenix-otel`,
 `openinference-instrumentation-langchain`).
 
+**Why `opentelemetry-sdk` and `opentelemetry-exporter-otlp-proto-http` are installed:**
+The `otel_routing.py` module builds a `TracerProvider` with `BatchSpanProcessor` and
+`OTLPSpanExporter` directly from the OpenTelemetry SDK. These packages are required
+for the configurable OTel routing introduced in v0.3.0, which supports sending traces
+to Phoenix, Arize Cloud, both, or neither — controlled by the `OTEL_DESTINATION`
+environment variable.
+
 **Why `openai` is installed via pip:**
 The `openai` SDK is used by the place validation and preference validation classifiers
 in `api.py`. It is not declared in `pyproject.toml` to keep the Poetry dependency graph
 clean — it is installed directly here alongside the other pip packages.
+
+**Why Phoenix uses a Docker Compose profile:**
+Phoenix is optional as of v0.3.0. When `OTEL_DESTINATION` is set to `arize` or `none`,
+there is no reason to run the Phoenix container. The `profiles: [phoenix]` key means
+Phoenix only starts when explicitly requested via `--profile phoenix` or when the
+Makefile detects that Phoenix is needed from the `.env` configuration.
 
 **The `temperature` model_kwargs pattern:**
 `gpt-5.3-chat-latest` does not accept any explicit `temperature` value. LangChain's
