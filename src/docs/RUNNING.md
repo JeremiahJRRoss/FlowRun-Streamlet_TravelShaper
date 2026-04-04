@@ -64,9 +64,14 @@ Open `.env` and fill in your keys:
 OPENAI_API_KEY=sk-...
 SERPAPI_API_KEY=...
 
-# Telemetry routing (phoenix | arize | both | none)
+# Telemetry routing (phoenix | arize | otlp | both | all | none)
 OTEL_DESTINATION=phoenix
 PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
+
+# Generic OTLP (optional — only needed if OTEL_DESTINATION=otlp or all)
+# OTLP_PROTOCOL=http                        # "http" (default) or "grpc"
+# OTLP_ENDPOINT=http://localhost:4318/v1/traces
+# OTLP_HEADERS=
 ```
 
 ---
@@ -107,7 +112,7 @@ docker run -p 8000:8000 --env-file .env travelshaper
 
 ## 3. Running the Tests
 
-### All 26 tests (recommended)
+### All 35 tests (recommended)
 
 ```bash
 pytest tests/ -v
@@ -135,15 +140,24 @@ tests/test_api.py::test_chat_accepts_valid_places                 PASSED
 tests/test_api.py::test_chat_rejects_invalid_place                PASSED
 tests/test_api.py::test_chat_auto_corrects_misspelled_place       PASSED
 tests/test_otel_routing.py::test_phoenix_destination_creates_one_exporter  PASSED
-tests/test_otel_routing.py::test_arize_destination_creates_one_exporter    PASSED
-tests/test_otel_routing.py::test_both_destination_creates_two_exporters    PASSED
-tests/test_otel_routing.py::test_none_destination_creates_no_exporters     PASSED
-tests/test_otel_routing.py::test_arize_missing_credentials_skips_silently  PASSED
 tests/test_otel_routing.py::test_phoenix_api_key_added_to_headers_when_present PASSED
-tests/test_otel_routing.py::test_project_name_sets_service_name            PASSED
 tests/test_otel_routing.py::test_phoenix_no_api_key_sends_no_auth_header   PASSED
+tests/test_otel_routing.py::test_arize_destination_calls_arize_register    PASSED
+tests/test_otel_routing.py::test_arize_missing_credentials_skips_silently  PASSED
+tests/test_otel_routing.py::test_both_destination_uses_arize_and_phoenix   PASSED
+tests/test_otel_routing.py::test_otlp_destination_creates_one_exporter     PASSED
+tests/test_otel_routing.py::test_otlp_headers_parsed_and_passed            PASSED
+tests/test_otel_routing.py::test_otlp_missing_endpoint_skips_silently      PASSED
+tests/test_otel_routing.py::test_all_destination_creates_all_exporters     PASSED
+tests/test_otel_routing.py::test_otlp_grpc_protocol_uses_grpc_exporter    PASSED
+tests/test_otel_routing.py::test_otlp_grpc_headers_passed_correctly        PASSED
+tests/test_otel_routing.py::test_otlp_grpc_fallback_when_package_missing   PASSED
+tests/test_otel_routing.py::test_otlp_http_protocol_explicit               PASSED
+tests/test_otel_routing.py::test_none_destination_creates_no_exporters     PASSED
+tests/test_otel_routing.py::test_project_name_sets_service_name            PASSED
+tests/test_otel_routing.py::test_default_project_name_is_travelshaper      PASSED
 
-26 passed
+35 passed
 ```
 
 > **No API keys are required to run tests.** All external calls are mocked.
@@ -154,7 +168,7 @@ tests/test_otel_routing.py::test_phoenix_no_api_key_sends_no_auth_header   PASSE
 pytest tests/test_tools.py -v          # 4 tool tests
 pytest tests/test_agent.py -v          # 6 agent graph + routing + dispatch tests
 pytest tests/test_api.py -v            # 8 API + validation tests
-pytest tests/test_otel_routing.py -v   # 8 OTel routing tests
+pytest tests/test_otel_routing.py -v   # 17 OTel routing tests
 ```
 
 ### Run a single test by name
@@ -232,7 +246,7 @@ src/
 │   ├── test_tools.py               # 4 tool unit tests (mocked)
 │   ├── test_agent.py               # 6 agent graph, routing + dispatch tests
 │   ├── test_api.py                 # 8 API + validation tests
-│   └── test_otel_routing.py        # 8 OTel routing tests
+│   └── test_otel_routing.py        # 17 OTel routing tests
 ├── evaluations/
 │   ├── run_evals.py                # Phoenix evaluation runner — 3 metrics
 │   └── metrics/
