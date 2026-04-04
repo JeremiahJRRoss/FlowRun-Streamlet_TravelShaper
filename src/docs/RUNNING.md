@@ -71,7 +71,7 @@ PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
 # Generic OTLP (optional — only needed if OTEL_DESTINATION=otlp or all)
 # OTLP_PROTOCOL=http                        # "http" (default) or "grpc"
 # OTLP_ENDPOINT=http://localhost:4318/v1/traces
-# OTLP_HEADERS=
+# OTLP_HEADERS=                              # comma-separated key=value pairs
 ```
 
 ---
@@ -279,7 +279,7 @@ Make sure you are running from `src/` with the venv active. Run `pytest tests/ -
 Traces are only generated when real queries hit the live API. Run `python -m traces.run_traces`.
 
 **Phoenix container not starting**
-Check that `OTEL_DESTINATION` in `.env` is set to `phoenix` or `both`. Phoenix only starts with the `phoenix` Docker Compose profile.
+Check that `OTEL_DESTINATION` in `.env` is set to `phoenix`, `both`, or `all`. Phoenix only starts with the `phoenix` Docker Compose profile.
 
 **`ModuleNotFoundError: No module named 'phoenix'`**
 Install Phoenix packages:

@@ -22,7 +22,7 @@ TravelShaper's architecture is optimized for five goals:
 
 2. **Keep the agent workflow simple and explainable.** The design preserves the starter app's ReAct-style graph and adds tools without introducing unnecessary orchestration complexity. The graph topology does not change — only the tool registry expands.
 
-3. **Make tool use observable and evaluable.** Configurable OTel routing captures LLM calls, tool calls, and full request traces. The destination is controlled by `OTEL_DESTINATION` in `.env` — Phoenix, Arize Cloud, both, or none. Evaluation metrics (user frustration, tool correctness, answer completeness) are runnable against collected traces.
+3. **Make tool use observable and evaluable.** Configurable OTel routing captures LLM calls, tool calls, and full request traces. The destination is controlled by `OTEL_DESTINATION` in `.env` — Phoenix, Arize Cloud, any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, etc.), combinations of all three, or none. Evaluation metrics (user frustration, tool correctness, answer completeness) are runnable against collected traces.
 
 4. **Support local demo and production discussion.** The architecture must run locally with Docker and also support a credible production deployment story with scaling, latency, and cost considerations for the presentation.
 
@@ -162,7 +162,7 @@ Owns all OpenTelemetry configuration. Reads `OTEL_DESTINATION` from `.env` and b
 Valid values for `OTEL_DESTINATION`:
 - `phoenix` — sends traces to local Phoenix or Phoenix Cloud
 - `arize` — sends traces to Arize Cloud (requires `ARIZE_API_KEY` + `ARIZE_SPACE_ID`)
-- `otlp` — sends traces to any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, etc.). `OTLP_PROTOCOL` selects transport: `http` (default) or `grpc`
+- `otlp` — sends traces to any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, Datadog, etc.; requires `OTLP_ENDPOINT`; `OTLP_PROTOCOL` selects transport: `http` (default) or `grpc`; optionally `OTLP_HEADERS`)
 - `both` — sends traces to Phoenix and Arize simultaneously
 - `all` — sends traces to Phoenix, Arize, and generic OTLP simultaneously
 - `none` — disables all telemetry
@@ -340,7 +340,9 @@ Already present in the starter code. Async-capable, automatic OpenAPI docs at `/
 Phoenix was the original choice (required by the assessment). In v0.3.0, observability was generalized to support multiple destinations via `otel_routing.py`:
 - Local-first development with Phoenix
 - Production transition to Arize Cloud without code changes
-- Dual-destination mode for migration overlap
+- Generic OTLP destination for any standards-compliant backend (Jaeger, Tempo, Honeycomb, Datadog)
+- Dual-destination mode (`both`) for Arize + Phoenix migration overlap
+- All-destination mode (`all`) for Phoenix + Arize + generic OTLP simultaneously
 - Disable mode for environments where tracing is not needed
 
 ---
@@ -710,9 +712,11 @@ Set `PHOENIX_API_KEY` in `.env`. The same `phoenix` destination routes traces to
 
 Set `OTEL_DESTINATION=arize` with `ARIZE_API_KEY` and `ARIZE_SPACE_ID`. The `arize.otel.register()` SDK handles the endpoint internally. Replace self-hosted Phoenix with Arize's managed platform. Benefits: persistent storage, team access, scheduled evaluations, drift monitoring.
 
-**Migration overlap:** Set `OTEL_DESTINATION=both` to send traces to both Phoenix and Arize during the transition. Remove Phoenix when confident in Arize.
+**Stage 4 — Third-party OTLP backends**
 
-**Alternative — Generic OTLP backend:** Set `OTEL_DESTINATION=otlp` with `OTLP_ENDPOINT` pointing to any OTLP-compatible backend (Jaeger, Grafana Tempo, Honeycomb, Datadog, etc.). Set `OTLP_PROTOCOL=grpc` for gRPC transport or leave it as `http` (default). Use `OTLP_HEADERS` for authentication. Set `OTEL_DESTINATION=all` to send traces to Phoenix, Arize, and a generic OTLP backend simultaneously.
+Set `OTEL_DESTINATION=otlp` with `OTLP_ENDPOINT` pointing to any OTLP-compatible backend (Jaeger, Grafana Tempo, Honeycomb, Datadog, etc.). Set `OTLP_PROTOCOL=grpc` for gRPC transport or leave it as `http` (default). Use `OTLP_HEADERS` for authentication (comma-separated `key=value` pairs, e.g. `x-honeycomb-team=abc123`). No proprietary SDK needed — uses the standard `OTLPSpanExporter` (HTTP) or `OTLPGrpcSpanExporter` (gRPC).
+
+**Migration overlap:** Set `OTEL_DESTINATION=both` to send traces to both Phoenix and Arize during a transition. Set `OTEL_DESTINATION=all` to send traces to Phoenix, Arize, and a generic OTLP backend simultaneously.
 
 All transitions require only `.env` changes — no application code modifications. This is possible because `otel_routing.py` uses standard OpenTelemetry (transport) with OpenInference (semantic conventions), which all destinations natively support.
 
@@ -733,7 +737,7 @@ All transitions require only `.env` changes — no application code modification
 | Tool schema tests | test_tools.py | 4 | Input types, output format, docstring presence | Mocked |
 | Agent graph tests | test_agent.py | 6 | Nodes, edges, routing, dispatch vs synthesis phase | Mocked |
 | API endpoint tests | test_api.py | 8 | HTTP status codes, response shapes, validation pipeline | Mocked |
-| OTel routing tests | test_otel_routing.py | 17 | Exporter creation, credential handling, destination selection, gRPC protocol, fallback, project name | Mocked |
+| OTel routing tests | test_otel_routing.py | 17 | Exporter creation, credential handling, destination selection, generic OTLP, headers parsing, gRPC protocol, fallback, project name | Mocked |
 | Integration tests (manual) | — | — | Full request with live APIs during demo | Live |
 
 ### 14.2 Mocking approach
@@ -753,7 +757,7 @@ pytest tests/ -v    # 35 passed
 The architecture is designed to evolve without rewrites. Each phase extends the existing structure.
 
 **Completed (v0.3.0–v0.3.2):**
-- Configurable OTel routing (phoenix / arize / both / none)
+- Configurable OTel routing (phoenix / arize / otlp / both / all / none)
 - Token reduction via condensed prompts and phase-based dispatch
 - Validation model optimization (gpt-4o → gpt-4o-mini)
 
@@ -783,7 +787,7 @@ The architecture is designed to evolve without rewrites. Each phase extends the 
 | Validation model | GPT-4o-mini | GPT-4o, keyword blocklist | Faster/cheaper for classification; sufficient accuracy |
 | Travel data source | SerpAPI | Amadeus, Booking.com, web scraping | Single key for 3 tool types; structured JSON |
 | General search | DuckDuckGo | Google Custom Search | No API key needed; already in starter code |
-| Observability | Configurable OTel (Phoenix/Arize/both/none) | Phoenix-only, LangSmith | Vendor-neutral; supports production transition |
+| Observability | Configurable OTel (Phoenix/Arize/OTLP/both/all/none) | Phoenix-only, LangSmith | Vendor-neutral; supports production transition to any OTLP backend |
 | HTTP framework | FastAPI | Flask, Django | Already in starter code; async-capable |
 | Deployment | Docker + Docker Compose | Bare Python, Kubernetes | Docker is assessment requirement |
 | Test runner | pytest | unittest | Cleaner syntax; standard in ecosystem |

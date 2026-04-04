@@ -333,6 +333,8 @@ SERPAPI_API_KEY=...
 OTEL_DESTINATION=phoenix
 OTEL_PROJECT_NAME=travelshaper
 PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
+# OTLP_ENDPOINT=http://localhost:4318/v1/traces    # only if OTEL_DESTINATION=otlp or all
+# OTLP_HEADERS=                                    # comma-separated key=value pairs
 ```
 
 Tests do **not** need API keys — all external calls are mocked.
@@ -549,8 +551,8 @@ TravelShaper uses configurable OTel routing controlled by `OTEL_DESTINATION` in 
 |-------|-------------|-------------------|
 | `phoenix` (default) | Local Phoenix or Phoenix Cloud | `PHOENIX_ENDPOINT`; optionally `PHOENIX_API_KEY` for Cloud |
 | `arize` | Arize Cloud | `ARIZE_API_KEY`, `ARIZE_SPACE_ID` |
-| `otlp` | Any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, etc.) | `OTLP_ENDPOINT`; optionally `OTLP_PROTOCOL`, `OTLP_HEADERS` |
-| `both` | Phoenix and Arize simultaneously | All Phoenix + Arize vars above |
+| `otlp` | Any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, Datadog, etc.) | `OTLP_ENDPOINT`; optionally `OTLP_PROTOCOL`, `OTLP_HEADERS` |
+| `both` | Phoenix and Arize simultaneously | All Phoenix + Arize vars |
 | `all` | Phoenix, Arize, and generic OTLP simultaneously | All of the above |
 | `none` | Disabled — no traces sent | None |
 
@@ -558,7 +560,7 @@ Set `OTEL_PROJECT_NAME` to control the project name in Phoenix/Arize dashboards 
 
 **Generic OTLP protocol selection:** When using `otlp` or `all`, set `OTLP_PROTOCOL` to `http` (default) or `grpc`. HTTP uses port 4318 with a `/v1/traces` path suffix; gRPC uses port 4317 with no path. If the gRPC package is not installed, the exporter falls back to HTTP with a warning.
 
-The routing module (`otel_routing.py`) reads these variables at startup and configures a `TracerProvider`. For Phoenix, it uses a manual `TracerProvider` with an `OTLPSpanExporter`. For Arize, it uses the official `arize.otel.register()` SDK, which handles endpoints, authentication, and project naming internally. For `both`, it starts with the Arize provider and adds a Phoenix exporter to it. For `otlp`, it builds an HTTP or gRPC exporter based on `OTLP_PROTOCOL`. The `TracerProvider` resource `service.name` is set from `OTEL_PROJECT_NAME` (default: `travelshaper`). If credentials are missing for a destination, it logs a warning and skips that destination gracefully.
+The routing module (`otel_routing.py`) reads these variables at startup and configures a `TracerProvider`. For Phoenix, it uses a manual `TracerProvider` with an `OTLPSpanExporter`. For Arize, it uses the official `arize.otel.register()` SDK, which handles endpoints, authentication, and project naming internally. For `both`, it starts with the Arize provider and adds a Phoenix exporter to it. For `otlp`, it builds an HTTP or gRPC exporter based on `OTLP_PROTOCOL`, pointed at `OTLP_ENDPOINT`, with optional auth headers from `OTLP_HEADERS` (comma-separated `key=value` pairs). For `all`, it starts with Arize and adds both Phoenix and OTLP exporters. The `TracerProvider` resource `service.name` is set from `OTEL_PROJECT_NAME` (default: `travelshaper`). If credentials are missing for a destination, it logs a warning and skips that destination gracefully.
 
 ---
 
@@ -630,7 +632,7 @@ docker compose logs --tail 100 phoenix
 
 **Missing traces in Phoenix** — confirm Phoenix is running (`docker ps`). Run at least one `/chat` query.
 
-**Phoenix not starting** — if `OTEL_DESTINATION` is set to `arize` or `none`, Phoenix won't start (by design). Set it to `phoenix` or `both` and use `make up` or `docker compose --profile phoenix up -d`.
+**Phoenix not starting** — if `OTEL_DESTINATION` is set to `arize`, `otlp`, or `none`, Phoenix won't start (by design). Set it to `phoenix`, `both`, or `all` and use `make up` or `docker compose --profile phoenix up -d`.
 
 ---
 

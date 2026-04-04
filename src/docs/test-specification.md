@@ -160,20 +160,20 @@ Sets `OTEL_DESTINATION=both` with Phoenix endpoint. Mocks both `_build_arize_pro
 Assertion: `_build_arize_provider` called once; `OTLPSpanExporter` called once.
 
 ### Test 25 — test_otlp_destination_creates_one_exporter
-Sets `OTEL_DESTINATION=otlp` with `OTLP_ENDPOINT=http://tempo:4318/v1/traces`.
+Sets `OTEL_DESTINATION=otlp` and `OTLP_ENDPOINT=http://tempo:4318/v1/traces`.
 Assertions: `OTLPSpanExporter` called exactly once; endpoint contains "tempo:4318".
 
 ### Test 26 — test_otlp_headers_parsed_and_passed
-Sets `OTEL_DESTINATION=otlp` with Honeycomb-style headers (`x-honeycomb-team`, `x-honeycomb-dataset`).
-Assertion: parsed headers are passed to `OTLPSpanExporter` as a dict.
+Sets `OTEL_DESTINATION=otlp` with `OTLP_ENDPOINT=https://api.honeycomb.io/v1/traces` and `OTLP_HEADERS=x-honeycomb-team=abc123,x-honeycomb-dataset=prod`.
+Assertions: exporter headers contain `x-honeycomb-team: abc123` and `x-honeycomb-dataset: prod`.
 
 ### Test 27 — test_otlp_missing_endpoint_skips_silently
 Sets `OTEL_DESTINATION=otlp` with empty `OTLP_ENDPOINT`.
 Assertions: `OTLPSpanExporter` never called; returns a non-None provider.
 
 ### Test 28 — test_all_destination_creates_all_exporters
-Sets `OTEL_DESTINATION=all` with Phoenix endpoint and OTLP endpoint.
-Assertions: `_build_arize_provider` called once; `OTLPSpanExporter` called twice (Phoenix + generic OTLP).
+Sets `OTEL_DESTINATION=all` with `PHOENIX_ENDPOINT` and `OTLP_ENDPOINT`. Mocks both `_build_arize_provider` and `OTLPSpanExporter`.
+Assertions: `_build_arize_provider` called once; `OTLPSpanExporter` called twice (once for Phoenix, once for generic OTLP).
 
 ### Test 29 — test_otlp_grpc_protocol_uses_grpc_exporter
 Sets `OTEL_DESTINATION=otlp`, `OTLP_PROTOCOL=grpc`, endpoint `http://localhost:4317`.
@@ -199,7 +199,7 @@ Assertion: `OTLPSpanExporter` never called.
 
 ### Test 34 — test_project_name_sets_service_name
 Sets `OTEL_DESTINATION=none` and `OTEL_PROJECT_NAME=my-custom-project`.
-Assertion: `provider.resource.attributes.get("service.name") == "my-custom-project"`.
+Assertion: `provider.resource.attributes.get("service.name") == "my-custom-project".`
 
 ### Test 35 — test_default_project_name_is_travelshaper
 Sets `OTEL_DESTINATION=none` without `OTEL_PROJECT_NAME`.
