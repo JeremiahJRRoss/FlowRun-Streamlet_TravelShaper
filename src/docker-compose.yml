@@ -9,6 +9,8 @@ services:
       - PHOENIX_ENDPOINT=http://phoenix:6006/v1/traces
       - ARIZE_API_KEY=${ARIZE_API_KEY:-}
       - ARIZE_SPACE_ID=${ARIZE_SPACE_ID:-}
+      - OTLP_ENDPOINT=${OTLP_ENDPOINT:-}
+      - OTLP_HEADERS=${OTLP_HEADERS:-}
     restart: unless-stopped
 
   phoenix:

@@ -4,7 +4,9 @@ TracerProvider with the appropriate exporters attached.
 Valid OTEL_DESTINATION values:
     phoenix   — local Phoenix or Phoenix Cloud
     arize     — Arize Cloud (uses arize.otel SDK)
+    otlp      — any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, etc.)
     both      — Phoenix and Arize simultaneously
+    all       — Phoenix, Arize, and generic OTLP simultaneously
     none      — disables all telemetry
 
 Called once at startup from agent.py.
@@ -35,6 +37,30 @@ def _phoenix_exporter() -> OTLPSpanExporter | None:
     headers = {}
     if api_key := os.getenv("PHOENIX_API_KEY", "").strip():
         headers["authorization"] = f"Bearer {api_key}"
+    return OTLPSpanExporter(endpoint=endpoint, headers=headers)
+
+
+def _parse_otlp_headers() -> dict:
+    """Parse OTLP_HEADERS env var from 'key1=val1,key2=val2' into a dict."""
+    raw = os.getenv("OTLP_HEADERS", "").strip()
+    if not raw:
+        return {}
+    headers = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            headers[k.strip()] = v.strip()
+    return headers
+
+
+def _otlp_exporter() -> OTLPSpanExporter | None:
+    """Build an OTLPSpanExporter for a generic OTLP-compatible backend."""
+    endpoint = os.getenv("OTLP_ENDPOINT", "").strip()
+    if not endpoint:
+        print("[otel] OTLP_ENDPOINT not set — generic OTLP disabled", file=sys.stderr)
+        return None
+    headers = _parse_otlp_headers()
     return OTLPSpanExporter(endpoint=endpoint, headers=headers)
 
 
@@ -98,6 +124,18 @@ def build_tracer_provider() -> TracerProvider:
                   file=sys.stderr)
         return provider
 
+    # ── Generic OTLP: manual TracerProvider + OTLP exporter ──
+    if dest == "otlp":
+        provider = TracerProvider(resource=Resource({"service.name": project}))
+        exporter = _otlp_exporter()
+        if exporter:
+            provider.add_span_processor(BatchSpanProcessor(exporter))
+            print(f"[otel] Traces → otlp (project: {project})")
+        else:
+            print("[otel] No active trace destinations — running without telemetry",
+                  file=sys.stderr)
+        return provider
+
     # ── Both: use arize.otel.register() then add Phoenix exporter ─
     if dest == "both":
         active = []
@@ -117,6 +155,32 @@ def build_tracer_provider() -> TracerProvider:
             if phoenix_exp:
                 provider.add_span_processor(BatchSpanProcessor(phoenix_exp))
                 active.append("phoenix")
+
+        if active:
+            print(f"[otel] Traces → {', '.join(active)} (project: {project})")
+        else:
+            print("[otel] No active trace destinations — running without telemetry",
+                  file=sys.stderr)
+        return provider
+
+    # ── All: Arize + Phoenix + generic OTLP ───────────────────
+    if dest == "all":
+        active = []
+        provider = _build_arize_provider()
+        if provider:
+            active.append("arize")
+        else:
+            provider = TracerProvider(resource=Resource({"service.name": project}))
+
+        phoenix_exp = _phoenix_exporter()
+        if phoenix_exp:
+            provider.add_span_processor(BatchSpanProcessor(phoenix_exp))
+            active.append("phoenix")
+
+        otlp_exp = _otlp_exporter()
+        if otlp_exp:
+            provider.add_span_processor(BatchSpanProcessor(otlp_exp))
+            active.append("otlp")
 
         if active:
             print(f"[otel] Traces → {', '.join(active)} (project: {project})")
