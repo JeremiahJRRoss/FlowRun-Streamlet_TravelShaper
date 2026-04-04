@@ -29,6 +29,7 @@ RUN pip install --no-cache-dir \
     openinference-semantic-conventions \
     opentelemetry-sdk \
     opentelemetry-exporter-otlp-proto-http \
+    opentelemetry-exporter-otlp-proto-grpc \
     openai \
     arize-otel
 

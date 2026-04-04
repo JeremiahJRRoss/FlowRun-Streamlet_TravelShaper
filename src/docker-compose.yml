@@ -11,6 +11,7 @@ services:
       - ARIZE_SPACE_ID=${ARIZE_SPACE_ID:-}
       - OTLP_ENDPOINT=${OTLP_ENDPOINT:-}
       - OTLP_HEADERS=${OTLP_HEADERS:-}
+      - OTLP_PROTOCOL=${OTLP_PROTOCOL:-http}
     restart: unless-stopped
 
   phoenix:

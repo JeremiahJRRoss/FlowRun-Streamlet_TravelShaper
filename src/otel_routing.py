@@ -5,6 +5,7 @@ Valid OTEL_DESTINATION values:
     phoenix   — local Phoenix or Phoenix Cloud
     arize     — Arize Cloud (uses arize.otel SDK)
     otlp      — any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, etc.)
+                OTLP_PROTOCOL selects transport: "http" (default) or "grpc"
     both      — Phoenix and Arize simultaneously
     all       — Phoenix, Arize, and generic OTLP simultaneously
     none      — disables all telemetry
@@ -19,6 +20,13 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+try:
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter as OTLPGrpcSpanExporter,
+    )
+except ImportError:
+    OTLPGrpcSpanExporter = None
 
 
 def _destination() -> str:
@@ -54,13 +62,23 @@ def _parse_otlp_headers() -> dict:
     return headers
 
 
-def _otlp_exporter() -> OTLPSpanExporter | None:
-    """Build an OTLPSpanExporter for a generic OTLP-compatible backend."""
+def _otlp_exporter():
+    """Build an OTLP exporter for a generic backend (HTTP or gRPC)."""
     endpoint = os.getenv("OTLP_ENDPOINT", "").strip()
     if not endpoint:
         print("[otel] OTLP_ENDPOINT not set — generic OTLP disabled", file=sys.stderr)
         return None
+
+    protocol = os.getenv("OTLP_PROTOCOL", "http").strip().lower()
     headers = _parse_otlp_headers()
+
+    if protocol == "grpc":
+        if OTLPGrpcSpanExporter is None:
+            print("[otel] opentelemetry-exporter-otlp-proto-grpc not installed — "
+                  "falling back to HTTP", file=sys.stderr)
+            return OTLPSpanExporter(endpoint=endpoint, headers=headers)
+        return OTLPGrpcSpanExporter(endpoint=endpoint, headers=headers)
+
     return OTLPSpanExporter(endpoint=endpoint, headers=headers)
 
 

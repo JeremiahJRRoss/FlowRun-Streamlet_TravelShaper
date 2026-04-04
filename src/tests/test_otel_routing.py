@@ -158,6 +158,70 @@ def test_all_destination_creates_all_exporters(mock_arize, mock_exporter):
     assert mock_exporter.call_count == 2
 
 
+# ── gRPC protocol tests ──────────────────────────────────────
+
+@patch("otel_routing.OTLPGrpcSpanExporter", create=True)
+def test_otlp_grpc_protocol_uses_grpc_exporter(mock_grpc_exporter):
+    mock_grpc_exporter.return_value = MagicMock()
+    env = {
+        "OTEL_DESTINATION": "otlp",
+        "OTLP_ENDPOINT": "http://localhost:4317",
+        "OTLP_PROTOCOL": "grpc",
+    }
+    with patch("otel_routing.OTLPGrpcSpanExporter", mock_grpc_exporter):
+        with patch.dict(os.environ, env, clear=False):
+            provider = build_tracer_provider()
+    mock_grpc_exporter.assert_called_once()
+    call_kwargs = mock_grpc_exporter.call_args.kwargs
+    assert "localhost:4317" in call_kwargs.get("endpoint", "")
+
+
+@patch("otel_routing.OTLPGrpcSpanExporter", create=True)
+def test_otlp_grpc_headers_passed_correctly(mock_grpc_exporter):
+    mock_grpc_exporter.return_value = MagicMock()
+    env = {
+        "OTEL_DESTINATION": "otlp",
+        "OTLP_ENDPOINT": "https://api.example.com:4317",
+        "OTLP_PROTOCOL": "grpc",
+        "OTLP_HEADERS": "authorization=Bearer tok123,x-scope-orgid=myorg",
+    }
+    with patch("otel_routing.OTLPGrpcSpanExporter", mock_grpc_exporter):
+        with patch.dict(os.environ, env, clear=False):
+            build_tracer_provider()
+    headers = mock_grpc_exporter.call_args.kwargs.get("headers", {})
+    assert headers.get("authorization") == "Bearer tok123"
+    assert headers.get("x-scope-orgid") == "myorg"
+
+
+@patch("otel_routing.OTLPSpanExporter")
+def test_otlp_grpc_fallback_when_package_missing(mock_http_exporter):
+    mock_http_exporter.return_value = MagicMock()
+    env = {
+        "OTEL_DESTINATION": "otlp",
+        "OTLP_ENDPOINT": "http://localhost:4317",
+        "OTLP_PROTOCOL": "grpc",
+    }
+    with patch("otel_routing.OTLPGrpcSpanExporter", None):
+        with patch.dict(os.environ, env, clear=False):
+            provider = build_tracer_provider()
+    # Falls back to HTTP exporter
+    mock_http_exporter.assert_called_once()
+    assert provider is not None
+
+
+@patch("otel_routing.OTLPSpanExporter")
+def test_otlp_http_protocol_explicit(mock_http_exporter):
+    mock_http_exporter.return_value = MagicMock()
+    env = {
+        "OTEL_DESTINATION": "otlp",
+        "OTLP_ENDPOINT": "http://localhost:4318/v1/traces",
+        "OTLP_PROTOCOL": "http",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        build_tracer_provider()
+    mock_http_exporter.assert_called_once()
+
+
 # ── None test ─────────────────────────────────────────────────
 
 @patch("otel_routing.OTLPSpanExporter")
