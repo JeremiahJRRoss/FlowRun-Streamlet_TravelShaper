@@ -98,6 +98,66 @@ def test_both_destination_uses_arize_and_phoenix(mock_arize, mock_exporter):
     mock_exporter.assert_called_once()
 
 
+# ── Generic OTLP tests ───────────────────────────────────────
+
+@patch("otel_routing.OTLPSpanExporter")
+def test_otlp_destination_creates_one_exporter(mock_exporter):
+    mock_exporter.return_value = MagicMock()
+    env = {
+        "OTEL_DESTINATION": "otlp",
+        "OTLP_ENDPOINT": "http://tempo:4318/v1/traces",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        provider = build_tracer_provider()
+    assert mock_exporter.call_count == 1
+    call_kwargs = mock_exporter.call_args.kwargs
+    assert "tempo:4318" in call_kwargs.get("endpoint", "")
+
+
+@patch("otel_routing.OTLPSpanExporter")
+def test_otlp_headers_parsed_and_passed(mock_exporter):
+    mock_exporter.return_value = MagicMock()
+    env = {
+        "OTEL_DESTINATION": "otlp",
+        "OTLP_ENDPOINT": "https://api.honeycomb.io/v1/traces",
+        "OTLP_HEADERS": "x-honeycomb-team=abc123,x-honeycomb-dataset=prod",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        build_tracer_provider()
+    headers = mock_exporter.call_args.kwargs.get("headers", {})
+    assert headers.get("x-honeycomb-team") == "abc123"
+    assert headers.get("x-honeycomb-dataset") == "prod"
+
+
+@patch("otel_routing.OTLPSpanExporter")
+def test_otlp_missing_endpoint_skips_silently(mock_exporter):
+    env = {
+        "OTEL_DESTINATION": "otlp",
+        "OTLP_ENDPOINT": "",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        provider = build_tracer_provider()
+    mock_exporter.assert_not_called()
+    assert provider is not None
+
+
+@patch("otel_routing.OTLPSpanExporter")
+@patch("otel_routing._build_arize_provider")
+def test_all_destination_creates_all_exporters(mock_arize, mock_exporter):
+    mock_arize.return_value = MagicMock()
+    mock_exporter.return_value = MagicMock()
+    env = {
+        "OTEL_DESTINATION": "all",
+        "PHOENIX_ENDPOINT": "http://localhost:6006/v1/traces",
+        "OTLP_ENDPOINT": "http://tempo:4318/v1/traces",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        provider = build_tracer_provider()
+    mock_arize.assert_called_once()
+    # OTLPSpanExporter called twice: once for Phoenix, once for generic OTLP
+    assert mock_exporter.call_count == 2
+
+
 # ── None test ─────────────────────────────────────────────────
 
 @patch("otel_routing.OTLPSpanExporter")
