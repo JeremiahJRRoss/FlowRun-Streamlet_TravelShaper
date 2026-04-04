@@ -190,6 +190,13 @@ exporter package provides `OTLPGrpcSpanExporter` used when `OTLP_PROTOCOL=grpc`.
 the package is missing, `otel_routing.py` falls back to the HTTP exporter with a
 warning — the application never crashes due to a missing gRPC package.
 
+**Why `opentelemetry-instrumentation-langchain` (OpenLLMetry) is NOT in the Dockerfile:**
+The default semantic convention is OpenInference, which is already installed. The GenAI
+convention package is an optional dependency installed by the user when needed
+(`pip install opentelemetry-instrumentation-langchain`). This follows the same pattern as
+other optional OTel packages — the `try/except ImportError` block in `agent.py` handles
+the missing package gracefully.
+
 **Why `arize-otel` is installed:**
 The `arize-otel` package provides `arize.otel.register()`, which is the official SDK
 for connecting to Arize Cloud. It handles the Arize endpoint, authentication, and

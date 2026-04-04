@@ -354,14 +354,20 @@ Phoenix was the original choice (required by the assessment). In v0.3.0, observa
 Telemetry is initialized at application startup before the agent is built. The `otel_routing` module reads `OTEL_DESTINATION` from `.env` and builds a `TracerProvider` with a `Resource` whose `service.name` is set from `OTEL_PROJECT_NAME` (default: `travelshaper`) and the appropriate OTLP exporters. The LangChain/LangGraph instrumentor adds OpenInference semantic attributes to every span.
 
 ```python
-from otel_routing import build_tracer_provider
-from openinference.instrumentation.langchain import LangChainInstrumentor
+from otel_routing import build_tracer_provider, get_semconv
 
 _tracer_provider = build_tracer_provider()
-LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
+_semconv = get_semconv()
+
+if _semconv == "genai":
+    from opentelemetry.instrumentation.langchain import LangchainInstrumentor
+    LangchainInstrumentor().instrument(tracer_provider=_tracer_provider)
+else:
+    from openinference.instrumentation.langchain import LangChainInstrumentor
+    LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
 ```
 
-This is wrapped in a `try/except ImportError` block in agent.py so the app functions without the OTel packages installed.
+This is wrapped in a `try/except ImportError` block in agent.py so the app functions without the OTel packages installed. The `OTEL_SEMCONV` environment variable controls which instrumentor loads (see §7.5).
 
 ### 7.2 What gets traced
 
@@ -437,16 +443,31 @@ The `openinference-instrumentation-langchain` package automatically adds these a
 
 ```python
 # agent.py — both layers initialized together
-from otel_routing import build_tracer_provider           # Layer 1: OTLP transport
-from openinference.instrumentation.langchain import LangChainInstrumentor  # Layer 2: semantic conventions
+from otel_routing import build_tracer_provider, get_semconv  # Layer 1: OTLP transport + config
 
 _tracer_provider = build_tracer_provider()  # reads OTEL_DESTINATION from .env
-LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
+_semconv = get_semconv()                     # reads OTEL_SEMCONV from .env
+
+if _semconv == "genai":
+    from opentelemetry.instrumentation.langchain import LangchainInstrumentor  # Layer 2a: GenAI conventions
+    LangchainInstrumentor().instrument(tracer_provider=_tracer_provider)
+else:
+    from openinference.instrumentation.langchain import LangChainInstrumentor  # Layer 2b: OpenInference conventions
+    LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
 ```
 
-Custom spans in `api.py` also set OpenInference standard attributes (`SpanAttributes.INPUT_VALUE`, `SpanAttributes.OUTPUT_VALUE`) so the request-level span renders properly in Phoenix's UI columns alongside the auto-instrumented LangChain spans.
+Custom spans in `api.py` also branch on `OTEL_SEMCONV`: OpenInference mode sets `SpanAttributes.INPUT_VALUE` and `SpanAttributes.OUTPUT_VALUE`; GenAI mode sets `gen_ai.request.input` and `gen_ai.response.output` as plain string attributes.
 
 **Analogy:** OpenTelemetry is like HTTP — it moves data from A to B. OpenInference is like HTML — it gives that data structure and meaning that the receiver (Phoenix) knows how to render.
+
+**Configurable Semantic Conventions (v0.5.0)**
+
+The semantic convention layer is now configurable via `OTEL_SEMCONV` in `.env`. When set to `openinference` (default), the `openinference-instrumentation-langchain` package instruments LangChain/LangGraph spans with OpenInference attributes — these render natively in Phoenix and Arize. When set to `genai`, the `opentelemetry-instrumentation-langchain` package (from Traceloop's OpenLLMetry project) instruments spans with the OTel GenAI semantic conventions, which are understood by standard backends like Jaeger, Grafana Tempo, Datadog, and Honeycomb.
+
+| OTEL_SEMCONV | Package | Key attributes | Best for |
+|---|---|---|---|
+| `openinference` (default) | `openinference-instrumentation-langchain` | `input.value`, `output.value`, `llm.model_name` | Phoenix, Arize |
+| `genai` | `opentelemetry-instrumentation-langchain` | `gen_ai.request.model`, `gen_ai.usage.input_tokens` | Jaeger, Tempo, Datadog, Honeycomb |
 
 ---
 
@@ -718,7 +739,9 @@ Set `OTEL_DESTINATION=otlp` with `OTLP_ENDPOINT` pointing to any OTLP-compatible
 
 **Migration overlap:** Set `OTEL_DESTINATION=both` to send traces to both Phoenix and Arize during a transition. Set `OTEL_DESTINATION=all` to send traces to Phoenix, Arize, and a generic OTLP backend simultaneously.
 
-All transitions require only `.env` changes — no application code modifications. This is possible because `otel_routing.py` uses standard OpenTelemetry (transport) with OpenInference (semantic conventions), which all destinations natively support.
+**Semantic conventions:** When using `OTEL_DESTINATION=otlp` with standard backends (Jaeger, Tempo, Datadog, Honeycomb), set `OTEL_SEMCONV=genai` for spans with OTel GenAI semantic conventions (`gen_ai.request.model`, `gen_ai.usage.input_tokens`). When using Phoenix or Arize, keep the default `OTEL_SEMCONV=openinference` for native rendering.
+
+All transitions require only `.env` changes — no application code modifications. This is possible because `otel_routing.py` uses standard OpenTelemetry (transport) with configurable semantic conventions (`OTEL_SEMCONV`), which all destinations support.
 
 ---
 

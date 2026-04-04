@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.0] — 2026-04-04
+
+### Configurable semantic convention layer
+
+- Added `OTEL_SEMCONV` env var — selects `openinference` (default) or `genai`
+  semantic conventions for span attributes
+- `openinference`: uses `openinference-instrumentation-langchain` — spans carry
+  `input.value`, `output.value`, `llm.model_name` (Phoenix/Arize native)
+- `genai`: uses `opentelemetry-instrumentation-langchain` (OpenLLMetry) — spans
+  carry `gen_ai.request.model`, `gen_ai.usage.input_tokens` (standard OTel GenAI)
+- Custom spans in `api.py` branch on `OTEL_SEMCONV` to set convention-appropriate
+  request-level attributes
+- Added `get_semconv()` helper to `otel_routing.py`
+- Added `OTEL_SEMCONV` to `docker-compose.yml` and `.env.example`
+- Graceful fallback: if the selected package isn't installed, logs a warning and
+  continues without tracing
+- Added 4 unit tests for semconv selection (21 OTel routing tests total)
+- Updated ARCHITECTURE.md §7.5, docker-spec, CLAUDE.md, CHANGELOG
+- Fully backward compatible — omitting `OTEL_SEMCONV` defaults to `openinference`
+
 ## [0.4.1] — 2026-04-04
 
 ### gRPC transport support for generic OTLP destination

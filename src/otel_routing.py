@@ -10,6 +10,14 @@ Valid OTEL_DESTINATION values:
     all       — Phoenix, Arize, and generic OTLP simultaneously
     none      — disables all telemetry
 
+OTEL_SEMCONV selects which semantic conventions are used for span attributes:
+    openinference (default) — OpenInference conventions (input.value,
+        output.value, llm.model_name). Renders natively in Phoenix and Arize.
+        Uses openinference-instrumentation-langchain.
+    genai — OTel GenAI semantic conventions (gen_ai.request.model,
+        gen_ai.usage.input_tokens). Standard in Jaeger, Tempo, Datadog,
+        Honeycomb. Uses opentelemetry-instrumentation-langchain (OpenLLMetry).
+
 Called once at startup from agent.py.
 """
 
@@ -35,6 +43,16 @@ def _destination() -> str:
 
 def _project_name() -> str:
     return os.getenv("OTEL_PROJECT_NAME", "travelshaper").strip()
+
+
+def _semconv() -> str:
+    """Return the selected semantic convention: 'openinference' or 'genai'."""
+    return os.getenv("OTEL_SEMCONV", "openinference").strip().lower()
+
+
+def get_semconv() -> str:
+    """Return the active semantic convention name for use by other modules."""
+    return _semconv()
 
 
 def _phoenix_exporter() -> OTLPSpanExporter | None:

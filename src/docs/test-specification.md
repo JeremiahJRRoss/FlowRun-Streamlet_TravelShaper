@@ -1,7 +1,7 @@
 # Test Specification — TravelShaper Travel Assistant
 
-**Version:** 2.1 (v0.3.2)  
-**Total tests:** 35 passing  
+**Version:** 2.2 (v0.5.0)  
+**Total tests:** 39 passing  
 **Every test uses mocked external calls.** No test requires a live API key.
 
 ---
@@ -130,7 +130,7 @@ Assertion: 200 response; agent called.
 
 ---
 
-## tests/test_otel_routing.py (17 tests)
+## tests/test_otel_routing.py (21 tests)
 
 All tests mock `OTLPSpanExporter` (and `OTLPGrpcSpanExporter` for gRPC tests) and use
 `patch.dict(os.environ)` to control environment variables. No live OTel endpoints are required.
@@ -205,6 +205,23 @@ Assertion: `provider.resource.attributes.get("service.name") == "my-custom-proje
 Sets `OTEL_DESTINATION=none` without `OTEL_PROJECT_NAME`.
 Assertion: `provider.resource.attributes.get("service.name") == "travelshaper"`.
 
+### Test 36 — test_semconv_defaults_to_openinference
+Sets `OTEL_DESTINATION=none` without `OTEL_SEMCONV`.
+Assertion: `get_semconv() == "openinference"`.
+
+### Test 37 — test_semconv_genai_selection
+Sets `OTEL_SEMCONV=genai`.
+Assertion: `get_semconv() == "genai"`.
+
+### Test 38 — test_semconv_openinference_instrumentor_loads
+Sets `OTEL_DESTINATION=none` and `OTEL_SEMCONV=openinference`.
+Assertion: `get_semconv() == "openinference"`.
+
+### Test 39 — test_semconv_genai_with_missing_package_does_not_crash
+Sets `OTEL_DESTINATION=none` and `OTEL_SEMCONV=genai`.
+Assertion: `get_semconv() == "genai"` — returns the value without crashing even if the
+OpenLLMetry package is not installed (the actual `ImportError` handling is in `agent.py`).
+
 ---
 
 ## Running the full suite
@@ -214,4 +231,4 @@ cd src
 pytest tests/ -v
 ```
 
-Expected output: `35 passed` (1 warning about `temperature` in `model_kwargs` is expected and harmless).
+Expected output: `39 passed` (1 warning about `temperature` in `model_kwargs` is expected and harmless).
