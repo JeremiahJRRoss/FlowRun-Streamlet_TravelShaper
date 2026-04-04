@@ -30,6 +30,14 @@ try:
 except ImportError:
     otel_trace = None  # OpenTelemetry not installed — skip custom spans
 
+# Determine which semantic convention to use for custom span attributes
+_semconv_mode = "openinference"
+try:
+    from otel_routing import get_semconv
+    _semconv_mode = get_semconv()
+except ImportError:
+    pass
+
 # ---------------------------------------------------------------------------
 # App + agent
 # ---------------------------------------------------------------------------
@@ -314,18 +322,29 @@ def chat(request: ChatRequest) -> ChatResponse:
     full_message = build_agent_message(request.message, request.preferences)
 
     if otel_trace is not None:
-        try:
-            from openinference.semconv.trace import SpanAttributes
-        except ImportError:
-            SpanAttributes = None
+        # Load OpenInference SpanAttributes only when needed
+        _span_attrs = None
+        if _semconv_mode != "genai":
+            try:
+                from openinference.semconv.trace import SpanAttributes
+                _span_attrs = SpanAttributes
+            except ImportError:
+                pass
 
         tracer = otel_trace.get_tracer("travelshaper")
         with tracer.start_as_current_span("travelshaper.request") as span:
-            # OpenInference standard attributes (render in Phoenix UI columns)
-            if SpanAttributes:
-                span.set_attribute(SpanAttributes.INPUT_VALUE, full_message)
-                span.set_attribute(SpanAttributes.INPUT_MIME_TYPE, "text/plain")
-            # Custom attributes (appear in Phoenix span details)
+            if _semconv_mode == "genai":
+                # OTel GenAI semantic conventions — standard attributes + events
+                span.set_attribute("gen_ai.system", "openai")
+                span.set_attribute("gen_ai.request.model", "gpt-5.3-chat-latest")
+                span.add_event("gen_ai.content.prompt",
+                               attributes={"gen_ai.prompt": full_message})
+            elif _span_attrs:
+                # OpenInference conventions (default)
+                span.set_attribute(_span_attrs.INPUT_VALUE, full_message)
+                span.set_attribute(_span_attrs.INPUT_MIME_TYPE, "text/plain")
+
+            # Custom attributes (convention-independent — always set)
             span.set_attribute("travelshaper.destination", request.destination or "")
             span.set_attribute("travelshaper.departure", request.departure or "")
             span.set_attribute("travelshaper.budget_mode",
@@ -338,9 +357,12 @@ def chat(request: ChatRequest) -> ChatResponse:
 
             # Set output after agent completes
             response_text = agent_result["messages"][-1].content
-            if SpanAttributes:
-                span.set_attribute(SpanAttributes.OUTPUT_VALUE, response_text)
-                span.set_attribute(SpanAttributes.OUTPUT_MIME_TYPE, "text/plain")
+            if _semconv_mode == "genai":
+                span.add_event("gen_ai.content.completion",
+                               attributes={"gen_ai.completion": response_text})
+            elif _span_attrs:
+                span.set_attribute(_span_attrs.OUTPUT_VALUE, response_text)
+                span.set_attribute(_span_attrs.OUTPUT_MIME_TYPE, "text/plain")
     else:
         agent_result = agent.invoke({"messages": [HumanMessage(content=full_message)]})
         response_text = agent_result["messages"][-1].content

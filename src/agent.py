@@ -7,6 +7,7 @@ tracing is enabled when the optional phoenix extras are installed.
 
 import operator
 import os
+import sys
 from typing import Annotated, Literal
 
 from dotenv import load_dotenv
@@ -23,22 +24,52 @@ from tools.cultural_guide import get_cultural_guide
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Observability — OTel routing
+# Observability — OTel routing + semantic conventions
 # ---------------------------------------------------------------------------
 # otel_routing.py reads OTEL_DESTINATION from .env and builds a
 # TracerProvider with the appropriate OTLP exporters (phoenix, arize,
-# both, or none). LangChainInstrumentor adds OpenInference semantic
-# attributes to every LangChain/LangGraph span. Custom spans in api.py
-# add request-level metadata.
+# otlp, both, all, or none).
+#
+# OTEL_SEMCONV controls which instrumentor and span attribute conventions
+# are used:
+#   openinference (default) — OpenInference conventions (input.value,
+#       output.value, llm.model_name). Renders natively in Phoenix and
+#       Arize. Uses openinference-instrumentation-langchain.
+#   genai — OTel GenAI semantic conventions (gen_ai.request.model,
+#       gen_ai.usage.input_tokens). Standard in Jaeger, Tempo, Datadog,
+#       Honeycomb. Uses opentelemetry-instrumentation-langchain (OpenLLMetry).
+#
+# Custom spans in api.py also branch on OTEL_SEMCONV to set the
+# appropriate request-level attributes.
 # ---------------------------------------------------------------------------
 try:
-    from otel_routing import build_tracer_provider
-    from openinference.instrumentation.langchain import LangChainInstrumentor
+    from otel_routing import build_tracer_provider, get_semconv
 
     _tracer_provider = build_tracer_provider()
-    LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
+    _semconv = get_semconv()
+
+    if _semconv == "genai":
+        # OpenLLMetry (Traceloop) — OTel GenAI semantic conventions
+        # Package: opentelemetry-instrumentation-langchain
+        # Note: lowercase 'chain' in LangchainInstrumentor
+        try:
+            from opentelemetry.instrumentation.langchain import LangchainInstrumentor
+            LangchainInstrumentor().instrument(tracer_provider=_tracer_provider)
+        except ImportError:
+            print(
+                "[otel] OTEL_SEMCONV=genai but opentelemetry-instrumentation-langchain "
+                "is not installed — tracing disabled. Install with: "
+                "pip install opentelemetry-instrumentation-langchain",
+                file=sys.stderr,
+            )
+    else:
+        # OpenInference (default) — Phoenix/Arize semantic conventions
+        # Package: openinference-instrumentation-langchain
+        from openinference.instrumentation.langchain import LangChainInstrumentor
+        LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
+
 except ImportError:
-    # OTel packages not installed — tracing disabled, agent still works
+    # Core OTel packages not installed — tracing disabled, agent still works
     pass
 
 # ---------------------------------------------------------------------------

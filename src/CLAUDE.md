@@ -20,6 +20,7 @@ Replace the hardcoded Phoenix setup in agent.py with a routing
 module driven by OTEL_DESTINATION in .env.
 Valid values: phoenix | arize | otlp | both | all | none
 OTLP_PROTOCOL selects transport: http (default) or grpc
+OTEL_SEMCONV selects semantic conventions: openinference (default) or genai
 
 ## Do not touch
 - tools/           — output truncation only, do not touch routing or API logic

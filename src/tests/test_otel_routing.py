@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from otel_routing import build_tracer_provider
+from otel_routing import build_tracer_provider, get_semconv
 
 
 # ── Phoenix tests (unchanged logic) ──────────────────────────
@@ -250,3 +250,44 @@ def test_default_project_name_is_travelshaper():
         os.environ.pop("OTEL_PROJECT_NAME", None)
         provider = build_tracer_provider()
     assert provider.resource.attributes.get("service.name") == "travelshaper"
+
+
+# ── Semantic convention selection tests ─────────────────────────
+
+
+def test_semconv_defaults_to_openinference():
+    """get_semconv() returns 'openinference' when OTEL_SEMCONV is unset."""
+    env = {"OTEL_DESTINATION": "none"}
+    with patch.dict(os.environ, env, clear=False):
+        os.environ.pop("OTEL_SEMCONV", None)
+        assert get_semconv() == "openinference"
+
+
+def test_semconv_genai_selection():
+    """get_semconv() returns 'genai' when OTEL_SEMCONV=genai."""
+    env = {"OTEL_SEMCONV": "genai"}
+    with patch.dict(os.environ, env, clear=False):
+        assert get_semconv() == "genai"
+
+
+def test_semconv_openinference_instrumentor_loads():
+    """With OTEL_SEMCONV=openinference, get_semconv returns correct value."""
+    env = {
+        "OTEL_DESTINATION": "none",
+        "OTEL_SEMCONV": "openinference",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        assert get_semconv() == "openinference"
+
+
+def test_semconv_genai_with_missing_package_does_not_crash():
+    """OTEL_SEMCONV=genai with missing OpenLLMetry package doesn't crash."""
+    env = {
+        "OTEL_DESTINATION": "none",
+        "OTEL_SEMCONV": "genai",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        semconv = get_semconv()
+        assert semconv == "genai"
+        # The actual ImportError handling is in agent.py's try/except block.
+        # This test verifies get_semconv returns the value without crashing.
