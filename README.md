@@ -107,7 +107,10 @@ SERPAPI_API_KEY=...
 OTEL_DESTINATION=phoenix
 
 # Semantic conventions — controls span attribute format
-# Options: openinference (default, for Phoenix/Arize) | genai (for Jaeger/Tempo/Datadog)
+# Options:
+#   openinference (default) — Arize's open-source LLM convention; native in Phoenix/Arize
+#   genai — Official OpenTelemetry GenAI semantic conventions (Development status);
+#           understood by any OTel-native backend (Jaeger, Tempo, Datadog, Honeycomb)
 # OTEL_SEMCONV=openinference
 
 # Project name in Phoenix/Arize dashboards
@@ -552,7 +555,7 @@ Browser / curl
      ── Observability (configurable) ──
            │
            ├── otel_routing.py reads OTEL_DESTINATION + OTEL_SEMCONV
-           ├── OpenInference or GenAI semantic conventions
+           ├── OpenInference or OTel GenAI semantic conventions
            └── Traces → Phoenix / Arize / OTLP / all / none
 ```
 
@@ -581,12 +584,12 @@ Set `OTEL_PROJECT_NAME` to control the project name in Phoenix/Arize dashboards 
 
 ### Semantic conventions (OTEL_SEMCONV)
 
-| Value | Package | Key attributes | Best for |
-|-------|---------|----------------|----------|
-| `openinference` (default) | `openinference-instrumentation-langchain` | `input.value`, `output.value`, `llm.model_name` | Phoenix, Arize |
-| `genai` | `opentelemetry-instrumentation-langchain` | `gen_ai.request.model`, `gen_ai.usage.input_tokens` | Jaeger, Tempo, Datadog, Honeycomb |
+| Value | Standard | Package | Key attributes | Best for |
+|-------|----------|---------|----------------|----------|
+| `openinference` (default) | OpenInference (Arize, open-source) | `openinference-instrumentation-langchain` | `input.value`, `output.value`, `llm.model_name` | Phoenix, Arize |
+| `genai` | OTel GenAI Semantic Conventions (official OTel, Development status) | `opentelemetry-instrumentation-langchain` | `gen_ai.request.model`, `gen_ai.usage.input_tokens` | Jaeger, Tempo, Datadog, Honeycomb |
 
-When using `OTEL_DESTINATION=otlp` with standard backends, set `OTEL_SEMCONV=genai` for spans with OTel GenAI semantic conventions. When using Phoenix or Arize, keep the default `OTEL_SEMCONV=openinference` for native rendering.
+When using `OTEL_DESTINATION=otlp` with standard OTel backends, set `OTEL_SEMCONV=genai` so spans carry the official OTel GenAI attributes that those backends know how to render. When using Phoenix or Arize, keep the default `OTEL_SEMCONV=openinference` — their UIs are built to display OpenInference attributes as LLM-specific views (prompt/response columns, token counts, tool trees).
 
 The routing module (`otel_routing.py`) reads these variables at startup and configures a `TracerProvider`. For Phoenix, it uses a manual `TracerProvider` with an `OTLPSpanExporter`. For Arize, it uses the official `arize.otel.register()` SDK. For `both`, it starts with the Arize provider and adds a Phoenix exporter. For `otlp`, it builds an HTTP or gRPC exporter based on `OTLP_PROTOCOL`. For `all`, it starts with Arize and adds both Phoenix and OTLP exporters. The `TracerProvider` resource `service.name` is set from `OTEL_PROJECT_NAME`. If credentials are missing for a destination, it logs a warning and skips that destination gracefully.
 
@@ -608,7 +611,7 @@ There is a pattern in how TravelShaper makes its choices, and the pattern is wor
 - **gpt-4o-mini for validation** — faster and cheaper than gpt-4o for simple classification tasks; sufficient accuracy for binary decisions.
 - **Single-turn design** — each request is independent. This is a deliberate product boundary, not a gap.
 - **Configurable OTel routing** — `OTEL_DESTINATION` in `.env` controls where traces go, supporting local Phoenix, Arize Cloud, any OTLP-compatible backend (via HTTP or gRPC), all three simultaneously, or none.
-- **Configurable semantic conventions** — `OTEL_SEMCONV` selects between OpenInference (Phoenix/Arize native) and GenAI (standard OTel) span attributes, so the same tracing code works with any backend.
+- **Configurable semantic conventions** — `OTEL_SEMCONV` selects between OpenInference (Arize's open-source convention, native in Phoenix/Arize) and the official OTel GenAI semantic conventions (Development status, understood by standard backends like Jaeger and Datadog), so the same tracing code works with any backend.
 
 ---
 
