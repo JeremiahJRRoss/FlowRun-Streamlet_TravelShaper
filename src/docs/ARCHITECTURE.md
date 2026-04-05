@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-TravelShaper is a LangGraph-based travel planning agent exposed via a FastAPI HTTP API. It accepts a natural-language travel request, dispatches specialized tools to gather flight, hotel, and cultural intelligence, and returns a synthesized travel briefing. All LLM and tool activity is traced via configurable OpenTelemetry routing that supports Arize Phoenix, Arize Cloud, any OTLP-compatible backend, or combinations thereof. Semantic conventions are configurable between OpenInference (Phoenix/Arize native) and OTel GenAI (standard backends).
+TravelShaper is a LangGraph-based travel planning agent exposed via a FastAPI HTTP API. It accepts a natural-language travel request, dispatches specialized tools to gather flight, hotel, and cultural intelligence, and returns a synthesized travel briefing. All LLM and tool activity is traced via configurable OpenTelemetry routing that supports Arize Phoenix, Arize Cloud, any OTLP-compatible backend, or combinations thereof. Semantic conventions are configurable between OpenInference (Arize's open-source convention, native in Phoenix/Arize) and the official OTel GenAI semantic conventions (understood by standard backends).
 
 This document describes the software architecture: component design, data flow, external dependencies, deployment topology, and the decisions behind each choice.
 
@@ -168,8 +168,8 @@ Valid values for `OTEL_DESTINATION`:
 - `none` — disables all telemetry
 
 Valid values for `OTEL_SEMCONV`:
-- `openinference` (default) — OpenInference conventions for Phoenix/Arize
-- `genai` — OTel GenAI conventions for standard backends
+- `openinference` (default) — Arize's open-source LLM convention; native in Phoenix/Arize
+- `genai` — Official OTel GenAI semantic conventions (Development status); understood by standard backends
 
 Called once at startup from `agent.py`:
 ```python
@@ -312,10 +312,10 @@ Evaluations run as a separate batch process after traces are collected. Three LL
 
 TravelShaper's observability stack has two distinct layers: OpenTelemetry (transport) and semantic conventions (meaning). The semantic convention layer is configurable via `OTEL_SEMCONV`:
 
-| OTEL_SEMCONV | Package | Key attributes | Best for |
-|---|---|---|---|
-| `openinference` (default) | `openinference-instrumentation-langchain` | `input.value`, `output.value`, `llm.model_name` | Phoenix, Arize |
-| `genai` | `opentelemetry-instrumentation-langchain` | `gen_ai.request.model`, `gen_ai.usage.input_tokens` | Jaeger, Tempo, Datadog, Honeycomb |
+| OTEL_SEMCONV | Standard | Package | Key attributes | Best for |
+|---|---|---|---|---|
+| `openinference` (default) | OpenInference (Arize, open-source) | `openinference-instrumentation-langchain` | `input.value`, `output.value`, `llm.model_name` | Phoenix, Arize |
+| `genai` | OTel GenAI Semantic Conventions (official OTel, Development status) | `opentelemetry-instrumentation-langchain` | `gen_ai.request.model`, `gen_ai.usage.input_tokens` | Jaeger, Tempo, Datadog, Honeycomb |
 
 Custom spans in `api.py` also branch on `OTEL_SEMCONV`: OpenInference mode sets `SpanAttributes.INPUT_VALUE` and `SpanAttributes.OUTPUT_VALUE`; GenAI mode uses standard span events (`gen_ai.content.prompt`, `gen_ai.content.completion`) and attributes (`gen_ai.system`, `gen_ai.request.model`).
 
@@ -387,7 +387,7 @@ pytest tests/ -v    # 39 passed
 | Travel data source | SerpAPI | Amadeus, Booking.com, web scraping | Single key for 3 tool types; structured JSON |
 | General search | DuckDuckGo | Google Custom Search | No API key needed; already in starter code |
 | Observability | Configurable OTel (Phoenix/Arize/OTLP/both/all/none) | Phoenix-only, LangSmith | Vendor-neutral; supports production transition to any OTLP backend |
-| Semantic conventions | Configurable (OpenInference/GenAI) | OpenInference-only | Supports both LLM-native and standard OTel backends |
+| Semantic conventions | Configurable (OpenInference / OTel GenAI) | OpenInference-only | OpenInference is native in Phoenix/Arize; official OTel GenAI conventions (Development status) are understood by standard backends |
 | HTTP framework | FastAPI | Flask, Django | Already in starter code; async-capable |
 | Deployment | Docker + Docker Compose | Bare Python, Kubernetes | Docker is assessment requirement |
 | Test runner | pytest | unittest | Cleaner syntax; standard in ecosystem |
@@ -411,8 +411,8 @@ pytest tests/ -v    # 39 passed
 | Span | A single unit of work in a trace (one LLM call, one tool execution) |
 | Trace | An end-to-end record of a user request, composed of multiple spans |
 | Phoenix | Arize's open-source observability platform for LLM applications |
-| OpenInference | An open-source semantic convention defining what attributes LLM spans carry |
-| GenAI semantic conventions | OTel-standard attributes for LLM spans (gen_ai.request.model, etc.) |
+| OpenInference | Arize's open-source semantic convention defining what attributes LLM spans carry (input.value, output.value, llm.model_name); native in Phoenix and Arize |
+| GenAI semantic conventions | Official OpenTelemetry semantic conventions for generative AI (Development status); defines attributes like gen_ai.request.model and gen_ai.usage.input_tokens; understood by standard OTel backends |
 | SerpAPI | A web API that returns structured Google search results |
 | OTEL / OTLP | OpenTelemetry / OpenTelemetry Protocol — vendor-neutral standard for telemetry transport |
 | Arize Cloud | Arize's managed observability platform — production-grade alternative to self-hosted Phoenix |

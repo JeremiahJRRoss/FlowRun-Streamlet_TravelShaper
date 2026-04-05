@@ -33,8 +33,8 @@ TravelShaper supports two convention sets, controlled by `OTEL_SEMCONV`:
 
 | OTEL_SEMCONV | Convention | Package | Key Attributes | Best For |
 |---|---|---|---|---|
-| `openinference` (default) | OpenInference | `openinference-instrumentation-langchain` | `input.value`, `output.value`, `llm.model_name` | Phoenix, Arize |
-| `genai` | OTel GenAI | `opentelemetry-instrumentation-langchain` (OpenLLMetry) | `gen_ai.request.model`, `gen_ai.usage.input_tokens` | Jaeger, Tempo, Datadog |
+| `openinference` (default) | OpenInference (Arize, open-source) | `openinference-instrumentation-langchain` | `input.value`, `output.value`, `llm.model_name` | Phoenix, Arize |
+| `genai` | OTel GenAI Semantic Conventions (official OTel, Development status) | `opentelemetry-instrumentation-langchain` (OpenLLMetry) | `gen_ai.request.model`, `gen_ai.usage.input_tokens` | Jaeger, Tempo, Datadog |
 
 The instrumentor package auto-decorates every LangChain/LangGraph operation with the appropriate attributes. No manual span creation is needed for the agent's core loop — the instrumentor handles it.
 

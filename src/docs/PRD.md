@@ -82,7 +82,7 @@ TravelShaper is explicitly **not** intended to:
 | Synthesized briefing | LLM combines all tool results into a single opinionated travel recommendation |
 | Budget-aware ranking | Recommendations are shaped by the traveler's budget preference |
 | Configurable observability | OTel routing to Phoenix, Arize Cloud, any OTLP-compatible backend (Jaeger, Tempo, Honeycomb, etc.), combinations of all three, or none — controlled by `OTEL_DESTINATION` in `.env` |
-| Configurable semantic conventions | Span attributes use OpenInference (Phoenix/Arize native) or OTel GenAI (standard backends) conventions — controlled by `OTEL_SEMCONV` in `.env` |
+| Configurable semantic conventions | Span attributes use OpenInference (Arize's open-source convention, native in Phoenix/Arize) or the official OTel GenAI semantic conventions (Development status, for standard backends) — controlled by `OTEL_SEMCONV` in `.env` |
 | Evaluation | Three LLM-as-judge metrics (user frustration, tool correctness, answer completeness) on traced queries |
 | Tests | 39 unit tests covering tool schemas, agent graph construction, prompt routing, API endpoints, OTel routing, and semantic convention selection |
 | Docker | Dockerfile for the application; docker-compose.yml including optional Phoenix |
@@ -257,7 +257,7 @@ Response:
 - Every tool invocation must produce a span capturing: tool name, input parameters, output data, and execution time.
 - Spans must be organized into traces that represent a complete user interaction.
 - Trace destination is configurable via `OTEL_DESTINATION` environment variable.
-- Span attribute format is configurable via `OTEL_SEMCONV` environment variable.
+- Span attribute format is configurable via `OTEL_SEMCONV` environment variable (OpenInference for Phoenix/Arize, official OTel GenAI conventions for standard backends).
 
 ### 8.4 Cost
 

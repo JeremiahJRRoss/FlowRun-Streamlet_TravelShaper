@@ -77,7 +77,7 @@ SERPAPI_API_KEY=...
 
 # Telemetry routing (optional)
 OTEL_DESTINATION=phoenix          # phoenix | arize | otlp | both | all | none
-OTEL_SEMCONV=openinference        # openinference | genai
+OTEL_SEMCONV=openinference        # openinference (Arize convention, default) | genai (official OTel GenAI convention)
 OTEL_PROJECT_NAME=travelshaper
 PHOENIX_ENDPOINT=http://localhost:6006/v1/traces
 
